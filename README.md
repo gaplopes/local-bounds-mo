@@ -99,7 +99,7 @@ bounds_ra.update_ra(Point<double>("z1", {10.0, 50.0, 30.0, 70.0, 20.0, 60.0}));
 ## Project Structure
 
 ```
-local-bounds/
+local-bounds-mo/
 ├── include/
 │   ├── local_bounds.hpp              # Single-include entry point
 │   └── local_bounds/
@@ -127,7 +127,7 @@ Add to your `CMakeLists.txt`:
 include(FetchContent)
 FetchContent_Declare(
     local_bounds
-    GIT_REPOSITORY https://github.com/gaplopes/local-bounds.git
+    GIT_REPOSITORY https://github.com/gaplopes/local-bounds-mo.git
     GIT_TAG        main   # or a specific tag, e.g. v1.0.0
 )
 FetchContent_MakeAvailable(local_bounds)
@@ -140,7 +140,7 @@ target_link_libraries(your_target PRIVATE local_bounds)
 Clone or add as a git submodule, then:
 
 ```cmake
-add_subdirectory(external/local-bounds)
+add_subdirectory(external/local-bounds-mo)
 target_link_libraries(your_target PRIVATE local_bounds)
 ```
 
@@ -232,7 +232,7 @@ If you use this library in your research, please cite the original paper:
   author       = {Lopes, Gon{\c{c}}alo},
   title = {{Local Bounds Library}: C++ header-only implementation of local bounds algorithms for multiobjective optimization},
   year         = {2026},
-  url          = {https://github.com/gaplopes/local-bounds}
+  url          = {https://github.com/gaplopes/local-bounds-mo}
 }
 ```
 
