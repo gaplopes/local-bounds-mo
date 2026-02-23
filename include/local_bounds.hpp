@@ -13,6 +13,7 @@
 
 #include "local_bounds/bound_set.hpp"
 #include "local_bounds/dominance.hpp"
+#include "local_bounds/neighborhood_bound_set.hpp"
 #include "local_bounds/types.hpp"
 
 #endif  // LOCAL_BOUNDS_HPP

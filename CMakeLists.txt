@@ -44,6 +44,10 @@ if(BUILD_TESTS)
     add_executable(test_bound_set tests/test_bound_set.cpp)
     target_link_libraries(test_bound_set PRIVATE local_bounds)
     add_test(NAME test_bound_set COMMAND test_bound_set)
+
+    add_executable(test_neighborhood_bound_set tests/test_neighborhood_bound_set.cpp)
+    target_link_libraries(test_neighborhood_bound_set PRIVATE local_bounds)
+    add_test(NAME test_neighborhood_bound_set COMMAND test_neighborhood_bound_set)
 endif()
 
 # Examples
