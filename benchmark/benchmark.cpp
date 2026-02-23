@@ -20,6 +20,7 @@
 #include <limits>
 #include <random>
 #include <sstream>
+#include <type_traits>
 #include <vector>
 
 #include "local_bounds.hpp"
@@ -98,7 +99,7 @@ std::vector<Point<int64_t>> generate_stable_set(
     }
 
     if (is_valid) {
-      points.emplace_back("z" + std::to_string(points.size() + 1), coords);
+      points.emplace_back("z" + std::to_string(points.size() + 1), std::move(coords));
     }
   }
 
@@ -220,8 +221,50 @@ bool compare_iteration_by_iteration(
   return true;
 }
 
+template <Objective Sense>
+bool compare_all_algorithms_bounds_set(
+    std::ostream& out,
+    const std::vector<Point<int64_t>>& points,
+    std::size_t dimensions,
+    int64_t ref_val,
+    int64_t anti_ref_val) {
+  BoundSet<int64_t, Sense> alg_re(std::vector<int64_t>(dimensions, ref_val),
+                                  std::vector<int64_t>(dimensions, anti_ref_val));
+  BoundSet<int64_t, Sense> alg_re_enhanced(std::vector<int64_t>(dimensions, ref_val),
+                                           std::vector<int64_t>(dimensions, anti_ref_val));
+  BoundSet<int64_t, Sense> alg_ra(std::vector<int64_t>(dimensions, ref_val),
+                                  std::vector<int64_t>(dimensions, anti_ref_val));
+  NeighborhoodBoundSet<int64_t, Sense> alg_nbs(std::vector<int64_t>(dimensions, ref_val),
+                                               std::vector<int64_t>(dimensions, anti_ref_val));
+
+  for (const auto& point : points) {
+    alg_re.update_re(point);
+    alg_re_enhanced.update_re_enhanced(point);
+    alg_ra.update_ra(point);
+    alg_nbs.update(point);
+
+    auto ca = canonicalize_bounds(alg_re.bounds());
+    auto cb = canonicalize_bounds(alg_re_enhanced.bounds());
+    auto cc = canonicalize_bounds(alg_ra.bounds());
+    auto cd = canonicalize_bounds(alg_nbs.nonredundant_bounds());
+
+    if (ca != cb || cb != cc || cc != cd) {
+      out << "  [DIFF] Bounds differ after inserting " << point.id << "="
+          << format_bound(point.coordinates) << "\n";
+      print_bound_set_delta(out, ca, cb, "RE", "Enhanced RE");
+      print_bound_set_delta(out, cb, cc, "Enhanced RE", "RA");
+      print_bound_set_delta(out, cc, cd, "RA", "NBS");
+      return false;
+    }
+  }
+  out << "  [OK] All algorithms produced the same bounds\n";
+  out.flush();
+  return true;
+}
+
 template <Objective Sense,
-          void (BoundSet<int64_t, Sense>::*UpdateMethod)(const Point<int64_t>&)>
+          typename BoundSetType,
+          void (BoundSetType::*UpdateMethod)(const Point<int64_t>&)>
 BenchmarkResult run_benchmark(
     const std::string& name,
     const std::string& sense_str,
@@ -230,28 +273,40 @@ BenchmarkResult run_benchmark(
     std::size_t dimensions,
     int64_t ref_val,
     int64_t anti_ref_val) {
-  BoundSet<int64_t, Sense> bounds(std::vector<int64_t>(dimensions, ref_val),
-                                  std::vector<int64_t>(dimensions, anti_ref_val));
-
+  // First pass: count |A| (outside timed section to avoid polluting timing)
   double total_A = 0;
-
-  auto start = std::chrono::high_resolution_clock::now();
-
+  BoundSetType tmp(std::vector<int64_t>(dimensions, ref_val),
+                   std::vector<int64_t>(dimensions, anti_ref_val));
   for (const auto& point : points) {
-    // Count |A| before update
     std::size_t A_size = 0;
-    for (const auto& b : bounds.bounds()) {
+    for (const auto& b : tmp.bounds()) {
       if (strictly_dominates<int64_t, Sense>(point.coordinates, b.coordinates)) {
         ++A_size;
       }
     }
     total_A += A_size;
+    (tmp.*UpdateMethod)(point);
+  }
 
+  // Second pass: timed execution (pure algorithm time)
+  BoundSetType bounds(std::vector<int64_t>(dimensions, ref_val),
+                      std::vector<int64_t>(dimensions, anti_ref_val));
+
+  auto start = std::chrono::high_resolution_clock::now();
+
+  for (const auto& point : points) {
     (bounds.*UpdateMethod)(point);
   }
 
   auto end = std::chrono::high_resolution_clock::now();
   double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
+
+  std::size_t final_bounds = 0;
+  if constexpr (std::is_same_v<BoundSetType, NeighborhoodBoundSet<int64_t, Sense>>) {
+    final_bounds = bounds.nonredundant_size();
+  } else {
+    final_bounds = bounds.size();
+  }
 
   return {
       name,
@@ -259,7 +314,7 @@ BenchmarkResult run_benchmark(
       inst_type_str,
       dimensions,
       points.size(),
-      bounds.size(),
+      final_bounds,
       time_ms,
       points.empty() ? 0 : total_A / points.size()};
 }
@@ -292,7 +347,7 @@ void print_result(std::ostream& out, const BenchmarkResult& r) {
 }
 
 template <Objective Sense>
-void run_benchmarks_for_sense(
+void run_benchmarks(
     std::ostream& out,
     const std::string& sense_str,
     const std::vector<std::pair<std::size_t, std::size_t>>& configs,
@@ -312,38 +367,50 @@ void run_benchmarks_for_sense(
       auto points = generate_stable_set<Sense>(
           target_points, dims, K, instance_type, seed);
 
-      out << "Generated " << points.size() << " points\n";
+      out << "\nGenerated " << points.size() << " points\n";
+
+      // Algorithm 1: Neighborhood-based update (General Case)
+      auto alg1 = run_benchmark<Sense, NeighborhoodBoundSet<int64_t, Sense>, &NeighborhoodBoundSet<int64_t, Sense>::update>(
+          "Algorithm 1 (NBHD)",
+          sense_str,
+          inst_str,
+          points,
+          dims,
+          ref_val,
+          anti_ref_val);
+      print_result(out, alg1);
 
       // Algorithm 2: Basic Redundancy Elimination (General Case)
-      auto alg2 = run_benchmark<Sense, &BoundSet<int64_t, Sense>::update_re>(
+      auto alg2 = run_benchmark<Sense, BoundSet<int64_t, Sense>, &BoundSet<int64_t, Sense>::update_re>(
           "Algorithm 2", sense_str, inst_str, points, dims, ref_val, anti_ref_val);
       print_result(out, alg2);
 
       // Algorithm 3: Enhanced Filtering (General Case)
-      auto alg3 = run_benchmark<Sense, &BoundSet<int64_t, Sense>::update_re_enhanced>(
+      auto alg3 = run_benchmark<Sense, BoundSet<int64_t, Sense>, &BoundSet<int64_t, Sense>::update_re_enhanced>(
           "Algorithm 3", sense_str, inst_str, points, dims, ref_val, anti_ref_val);
       print_result(out, alg3);
-      
+
       // Algorithm 4: Redundancy Avoidance (General Position only)
       BenchmarkResult alg4{};
       if (instance_type == InstanceType::GENERAL_POSITION) {
-        alg4 = run_benchmark<Sense, &BoundSet<int64_t, Sense>::update_ra_sa>(
+        alg4 = run_benchmark<Sense, BoundSet<int64_t, Sense>, &BoundSet<int64_t, Sense>::update_ra_sa>(
             "Algorithm 4", sense_str, inst_str, points, dims, ref_val, anti_ref_val);
         print_result(out, alg4);
       }
 
       // Algorithm 5: Redundancy Avoidance (General Case)
-      auto alg5 = run_benchmark<Sense, &BoundSet<int64_t, Sense>::update_ra>(
+      auto alg5 = run_benchmark<Sense, BoundSet<int64_t, Sense>, &BoundSet<int64_t, Sense>::update_ra>(
           "Algorithm 5", sense_str, inst_str, points, dims, ref_val, anti_ref_val);
       print_result(out, alg5);
 
       // Naive Algorithm: Brute-force generation and filtering of all candidate bounds (General Case)
-      auto naive = run_benchmark<Sense, &BoundSet<int64_t, Sense>::update_naive>(
+      auto naive = run_benchmark<Sense, BoundSet<int64_t, Sense>, &BoundSet<int64_t, Sense>::update_naive>(
           "Naive", sense_str, inst_str, points, dims, ref_val, anti_ref_val);
       print_result(out, naive);
 
       // Iteration-by-iteration comparison to identify exact differences.
       // To keep runtime practical, limit detailed checks to a subset.
+
       if (naive.final_bounds != alg2.final_bounds) {
         out << "  [WARNING] Final bound counts differ between Naive and Algorithm 2\n";
         const std::size_t comparison_limit = std::max(naive.final_bounds, alg2.final_bounds);
@@ -353,6 +420,14 @@ void run_benchmarks_for_sense(
             &BoundSet<int64_t, Sense>::update_naive,
             &BoundSet<int64_t, Sense>::update_re>(
             out, "Naive", "Algorithm 2", points, dims, ref_val, anti_ref_val, comparison_limit);
+      }
+      if (alg2.final_bounds != alg1.final_bounds) {
+        if (instance_type == InstanceType::GENERAL_CASE) {
+          out << "  [NOTE] |U(N)| differs: Algorithm 1 keeps quasi-nonredundant bounds"
+              << " to preserve neighborhood connectivity (expected in NGP, see Section 4.3)\n";
+        } else {
+          out << "  [WARNING] Final bound counts differ between Algorithm 2 and Algorithm 1 (NBHD)\n";
+        }
       }
       if (alg2.final_bounds != alg3.final_bounds) {
         out << "  [WARNING] Final bound counts differ between Algorithm 2 and Algorithm 3\n";
@@ -390,29 +465,47 @@ void run_benchmarks_for_sense(
   }
 }
 
-int main(int /*argc*/, char* /*argv*/[]) {
-  std::cout << "=============================================\n";
-  std::cout << "  Local Bounds Algorithm Benchmark\n";
-  std::cout << "=============================================\n\n";
+template <Objective Sense>
+void run_benchmarks_compare_all(
+    std::ostream& out,
+    const std::string& sense_str,
+    const std::vector<std::pair<std::size_t, std::size_t>>& configs,
+    InstanceType instance_type,
+    int64_t K,
+    int64_t ref_val,
+    int64_t anti_ref_val,
+    unsigned num_runs) {
+  const std::string inst_str = instance_type_str(instance_type);
 
+  for (const auto& [dims, target_points] : configs) {
+    out << "\n--- " << sense_str << " p = " << dims
+        << ", target |N| = " << target_points << " ---\n";
+
+    for (unsigned run = 0; run < num_runs; ++run) {
+      unsigned seed = 42 + run;
+      auto points = generate_stable_set<Sense>(
+          target_points, dims, K, instance_type, seed);
+
+      out << "Generated " << points.size() << " points\n";
+
+      compare_all_algorithms_bounds_set<Sense>(out, points, dims, ref_val, anti_ref_val);
+    }
+  }
+}
+
+int main(int /*argc*/, char* /*argv*/[]) {
   // Open results file
   std::ofstream results_file("benchmark_results.txt");
   if (!results_file) {
     std::cerr << "Warning: Could not open results file for writing\n";
   }
 
-  // Write to both console and file
-  auto write_both = [&](const std::string& msg) {
-    std::cout << msg;
-    if (results_file) results_file << msg;
-  };
+  // Set the output stream as console or file
+  std::ostream& out = results_file ? static_cast<std::ostream&>(results_file) : std::cout;
 
-  write_both("=============================================\n");
-  write_both("  Local Bounds Algorithm Benchmark\n");
-  write_both("  Replicating experiments from the paper:\n");
-  write_both("  'On the representation of the search region\n");
-  write_both("  in multiobjective optimization'\n");
-  write_both("=============================================\n\n");
+  out << "=============================================\n";
+  out << "  Local Bounds Algorithm Benchmark\n";
+  out << "=============================================\n\n";
 
   // Configuration (reduced sizes for reasonable runtime)
   std::vector<std::pair<std::size_t, std::size_t>> configs = {
@@ -428,36 +521,32 @@ int main(int /*argc*/, char* /*argv*/[]) {
       InstanceType::GENERAL_CASE};
 
   // Print header
-  print_header(std::cout);
-  if (results_file) print_header(results_file);
+  print_header(out);
 
   for (const auto& instance_type : instance_types) {
-    // Run benchmarks for both MINIMIZE and MAXIMIZE senses
     // Run MINIMIZATION benchmarks
     // ref_val = M = K+1 (nadir), anti_ref_val = m = 0 (ideal)
-    write_both("\n========== MINIMIZATION ==========\n");
-    run_benchmarks_for_sense<Objective::MINIMIZE>(
-        std::cout, "MIN", configs, instance_type, K, K + 1, 0, num_runs);
-    if (results_file) {
-      run_benchmarks_for_sense<Objective::MINIMIZE>(
-          results_file, "MIN", configs, instance_type, K, K + 1, 0, num_runs);
-    }
+    out << "\n========== MINIMIZATION ==========\n";
+    run_benchmarks<Objective::MINIMIZE>(
+        out, "MIN", configs, instance_type, K, K + 1, 0, num_runs);
+
+    // run_benchmarks_compare_all<Objective::MINIMIZE>(
+    //     out, "MIN", configs, instance_type, K, K + 1, 0, num_runs);
 
     // Run MAXIMIZATION benchmarks
     // ref_val = m = 0 (ideal), anti_ref_val = M = K+1 (nadir)
-    write_both("\n========== MAXIMIZATION ==========\n");
-    run_benchmarks_for_sense<Objective::MAXIMIZE>(
-        std::cout, "MAX", configs, instance_type, K, 0, K + 1, num_runs);
-    if (results_file) {
-      run_benchmarks_for_sense<Objective::MAXIMIZE>(
-          results_file, "MAX", configs, instance_type, K, 0, K + 1, num_runs);
-    }
+    out << "\n========== MAXIMIZATION ==========\n";
+    run_benchmarks<Objective::MAXIMIZE>(
+        out, "MAX", configs, instance_type, K, 0, K + 1, num_runs);
+
+    // run_benchmarks_compare_all<Objective::MAXIMIZE>(
+    //     out, "MAX", configs, instance_type, K, 0, K + 1, num_runs);
   }
 
-  write_both("\n=============================================\n");
-  write_both("  Benchmark Complete\n");
-  write_both("  Results saved to: benchmark_results.txt\n");
-  write_both("=============================================\n");
+  out << "\n=============================================\n";
+  out << "  Benchmark Complete\n";
+  out << "  Results saved to: benchmark_results.txt\n";
+  out << "=============================================\n";
 
   return 0;
 }
