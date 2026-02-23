@@ -1,60 +1,107 @@
 # Local Bounds Library
 
-A C++ header-only library for maintaining local bounds in multiobjective optimization.
+> Header-only C++ library for maintaining local upper/lower bounds in multiobjective optimization.
 
-Based on the paper: *"On the representation of the search region in multiobjective optimization"* by Klamroth, Lacour, and Vanderpooten (European Journal of Operational Research, 2015). [DOI: 10.1016/j.ejor.2015.03.031](http://dx.doi.org/10.1016/j.ejor.2015.03.031)
+Based on two papers:
+- **Paper 1:** *"On the representation of the search region in multiobjective optimization"* by Klamroth, Lacour, and Vanderpooten (EJOR, 2015). [DOI: 10.1016/j.ejor.2015.03.031](http://dx.doi.org/10.1016/j.ejor.2015.03.031)
+- **Paper 2:** *"Efficient computation of the search region in multi-objective optimization"* by Dächert, Klamroth, Lacour, and Vanderpooten (EJOR, 2017). [DOI: 10.1016/j.ejor.2016.05.029](http://dx.doi.org/10.1016/j.ejor.2016.05.029)
 
-This library is an **independent C++ reimplementation** of the five algorithms described in the paper. The original paper does not provide source code. Test cases are derived from the paper's worked examples (Sections 2–4) and validated against the naive brute-force algorithm for correctness.
+This library is an **independent C++ reimplementation** of the algorithms described in both papers. The original papers do not provide source code. Test cases are derived from worked examples and validated against the naive brute-force algorithm for correctness.
 
 ## Features
 
 - **Header-only** - Just include and use
 - **Min/Max support** - Works for both minimization and maximization problems
 - **Template-based** - Supports any numeric type (`int`, `int64_t`, `double`, etc.)
-- **Multiple algorithms**:
+- **Redundancy Algorithms from Paper 1** (via `BoundSet`):
   - `update_naive()`: Brute-force for correctness verification
   - `update_re()`: Algorithm 2 - Redundancy Elimination (RE)
   - `update_re_enhanced()`: Algorithm 3 - Redundancy Elimination (RE) Enhanced
   - `update_ra_sa()`: Algorithm 4 - Redundancy Avoidance (RA) (General Position)
   - `update_ra()`: Algorithm 5 - Redundancy Avoidance (RA) (General Case)
+- **Neighborhood-based Algorithm from Paper 2** (via `NeighborhoodBoundSet`):
+  - `update()`: Algorithm 1 - Neighborhood-Based Update (Paper 2), O(|U_z̄|) per update
 
-### Complexity (from the paper)
+### Complexity
 
-All algorithms share a common first step: finding the set A of bounds whose search zones contain the new point. This costs O(\|U(N)\|) with a linear scan, or O(log^p \|U(N)\| + \|A\|) with a range tree (see paper Section 5.2). **This library uses the linear scan approach.** 
+**Algorithms 2–5** (Paper 1) share a common first step: finding the set A of bounds whose search zones contain the new point. This costs O(|U(N)|) with a linear scan, or O(log^p |U(N)| + |A|) with a range tree (see Paper 1 Section 5.2). **This library uses the linear scan approach.** The complexities below are for the **remaining steps** (candidate generation and filtering/avoidance):
 
-The complexities below are for the **remaining steps** (candidate generation and filtering/avoidance):
+| Algorithm | Class | Remaining-step complexity | Notes |
+|-----------|-------|--------------------------|-------|
+| Naive | `BoundSet` | O(p²\|A\|² + p\|A\|·\|U\|) | Brute-force: generates p\|A\| candidates, pairwise + cross filtering |
+| Algorithm 2 (RE) | `BoundSet` | O(p\|A\|·(p\|A\| + \|B\|)) | Filters candidates against P ∪ B |
+| Algorithm 3 (RE enhanced) | `BoundSet` | O(\|A\|²) | Prop. 5.1; reducible to O(\|A\| log \|A\|) for p ∈ {2,3}, O(\|A\| log^(p-3) \|A\| log log \|A\|) for p ≥ 4 |
+| Algorithm 4 (RA, GP) | `BoundSet` | O(\|A\|) | Prop. 5.2; no filtering needed |
+| Algorithm 5 (RA, general) | `BoundSet` | O(\|N\|·\|A\|) worst case | Due to Z^k(u) sets; in practice much smaller |
 
-| Algorithm | Remaining-step complexity | Notes |
-|-----------|--------------------------|-------|
-| Naive | O(p²\|A\|² + p\|A\|·\|U\|) | Brute-force: generates p\|A\| candidates, pairwise + cross filtering |
-| Algorithm 2 (RE) | O(p\|A\|·(p\|A\| + \|B\|)) | Filters candidates against P ∪ B |
-| Algorithm 3 (RE enhanced) | O(\|A\|²) | Prop. 5.1; reducible to O(\|A\| log \|A\|) for p ∈ {2,3}, O(\|A\| log^(p-3) \|A\| log log \|A\|) for p ≥ 4 |
-| Algorithm 4 (RA, general position) | O(\|A\|) | Prop. 5.2; no filtering needed |
-| Algorithm 5 (RA, general case) | O(\|N\|·\|A\|) worst case | Due to Z^k(u) sets; in practice much smaller |
+**Algorithm 1** (Paper 2) takes a fundamentally different approach. Instead of scanning all bounds to find A, it uses a **neighborhood graph** to traverse only the affected region:
+
+| Algorithm | Class | Total complexity | Notes |
+|-----------|-------|------------------|-------|
+| Algorithm 1 (Neighborhood) | `NeighborhoodBoundSet` | **O(\|U_z̄\|)** | \|U_z̄\| = bounds created + destroyed per update; no scan of full \|U(N)\| |
+
+Algorithm 1's advantage is that \|U_z̄\| is typically much smaller than \|U(N)\|. In the worst case O(\|U_z̄\|) = O(\|U(N)\|), but this only occurs in pathological instances. In practice, the savings are substantial, especially for large \|U(N)\|.
 
 Where:
-- |U| is the total number of local bounds
-- |A| is the number of search zones containing the new point
+- |U(N)| is the total number of local bounds
+- |A| is the number of search zones containing the new point (|A| ⊆ |U_z̄|)
+- |U_z̄| is the number of bounds created and destroyed during one update
 - |N| is the total number of points
 - p is the number of objectives
 
 ### Which algorithm should I use?
 
-Based on the empirical analysis from the paper (Section 5.3), the recommended algorithm depends on **p** (the number of objectives):
-
 | Objectives (p) | Recommended algorithm | Rationale |
 |---|---|---|
-| p ≤ 5 | `update_re_enhanced()` (Algorithm 3, RE) | Better cache locality and smaller \|A\|, making the filtering step cheap |
-| p = 5 | Either RE or RA | Performance is close; RE is marginally faster |
-| p ≥ 6 | `update_ra_sa()` / `update_ra()` (Algorithms 4/5, RA) | Avoids expensive filtering; advantage grows rapidly with p |
+| Any p, large \|U(N)\| | `NeighborhoodBoundSet::update()` (Algorithm 1) | O(\|U_z̄\|) — does not scan the full bound set; fastest when \|U(N)\| is large |
+| p ≤ 5, moderate \|U(N)\| | `BoundSet::update_re_enhanced()` (Algorithm 3) | Better cache locality and smaller \|A\|, making the filtering step cheap |
+| p = 5 | Either Algorithm 1 or RE/RA | Performance is close; profile for your workload |
+| p ≥ 6, moderate \|U(N)\| | `BoundSet::update_ra_sa()` / `update_ra()` (Algorithms 4/5) | Avoids expensive filtering; advantage grows rapidly with p |
 
-The crossover is driven by **|A|** (the average number of search zones containing the new point), which grows rapidly with p. From the paper's experiments on SA instances (Section 5.3): ≈4 for p=3, ≈22 for p=4, ≈142 for p=5, ≈736 for p=6. The RE approach must filter all |A| dominated bounds each iteration, while the RA approach avoids generating redundant bounds entirely.
+**Algorithm 1** (`NeighborhoodBoundSet`) from Paper 2 is generally the fastest choice. Its O(|U_z̄|) complexity means it only touches the bounds affected by the new point, while all other algorithms must scan the entire set O(|U(N)|) to find affected bounds. The advantage grows with |U(N)|.
 
-> **Note on Algorithm 4 vs 5:** Algorithm 4 (`update_ra_sa`) assumes *general position* (SA) — that no two distinct points share the same value in any objective. If your points may have duplicate component values, use Algorithm 5 (`update_ra`). On pathological instances with many duplicates and small objective ranges, RE may still outperform RA even at p=6.
+The crossover between Algorithms 2–5 is driven by **|A|** (the average number of search zones containing the new point), which grows rapidly with p. From Paper 1's experiments: ≈4 for p=3, ≈22 for p=4, ≈142 for p=5, ≈736 for p=6.
 
-> **Note:** Algorithms 4 and 5 require the two-argument `BoundSet` constructor (with both reference and anti-reference points). See the Quick Start section below.
+> **Note on Algorithm 1 and General Case:** In the General Case (points sharing component values), Algorithm 1 maintains *quasi-nonredundant* bounds to preserve neighborhood graph connectivity. Use `nonredundant_bounds()` / `nonredundant_size()` to get the filtered set matching Algorithms 2–5. In the General Position case, all bounds are nonredundant, so `bounds()` and `nonredundant_bounds()` return the same set. See the article for more details.
+
+> **Note on Algorithm 4 vs 5:** Algorithm 4 (`update_ra_sa`) assumes *general position* (SA) — that no two distinct points share the same value in any objective. If your points may have duplicate component values, use Algorithm 5 (`update_ra`).
+
+> **Note:** Algorithm 1, 4, and 5 all require both reference and anti-reference points. See the Quick Start section below.
 
 ## Quick Start
+
+### Algorithm 1 — NeighborhoodBoundSet (recommended)
+
+The fastest algorithm for most use cases. Uses a neighborhood graph for O(|U_z̄|) updates:
+
+```cpp
+#include "local_bounds.hpp"
+using namespace local_bounds;
+
+// Requires both reference (nadir) and anti-reference (ideal) points
+NeighborhoodBoundSet<double, Objective::MINIMIZE> bounds(
+    {100.0, 100.0, 100.0},  // nadir (reference)
+    {  0.0,   0.0,   0.0}   // ideal (anti-reference)
+);
+
+bounds.update(Point<double>("z1", {30.0, 70.0, 50.0}));
+bounds.update(Point<double>("z2", {50.0, 50.0, 40.0}));
+
+// Get bounds (all, including quasi-nonredundant in NGP case)
+for (const auto& b : bounds.bounds()) {
+    std::cout << b.to_string() << std::endl;
+}
+
+// Or get only nonredundant bounds (matches Algorithms 2–5 output)
+for (const auto& b : bounds.nonredundant_bounds()) {
+    std::cout << b.to_string() << std::endl;
+}
+
+std::cout << "Total: " << bounds.size()
+          << ", Nonredundant: " << bounds.nonredundant_size() << std::endl;
+```
+
+### Algorithms 2–5 — BoundSet
 
 The simplest way is to use `update_auto()`, which selects the best algorithm based on the number of objectives `p`:
 
@@ -105,10 +152,12 @@ local-bounds-mo/
 │   └── local_bounds/
 │       ├── types.hpp                 # Point<T>, LocalBound<T>, Objective enum
 │       ├── dominance.hpp             # Dominance relation functions
-│       └── bound_set.hpp             # BoundSet<T, Sense> with all 5 algorithms
+│       ├── bound_set.hpp             # BoundSet<T, Sense> with Algorithms 2–5
+│       └── neighborhood_bound_set.hpp # NeighborhoodBoundSet<T, Sense> (Algorithm 1)
 ├── tests/
-│   ├── test_dominance.cpp            # Dominance relation tests (32 assertions)
-│   └── test_bound_set.cpp            # BoundSet tests (57 assertions)
+│   ├── test_dominance.cpp            # Dominance relation tests
+│   ├── test_bound_set.cpp            # BoundSet tests
+│   └── test_neighborhood_bound_set.cpp # NeighborhoodBoundSet tests
 ├── examples/
 │   └── basic_usage.cpp               # Min/max/dominance usage examples
 ├── benchmark/
@@ -180,7 +229,28 @@ Available presets: `debug`, `release`, `dev` (see [CMakePresets.json](CMakePrese
 
 ## API
 
-### BoundSet
+### NeighborhoodBoundSet (Algorithm 1 — Paper 2)
+
+```cpp
+template <typename T = double, Objective Sense = Objective::MINIMIZE>
+class NeighborhoodBoundSet {
+    // Requires both reference and anti-reference points
+    NeighborhoodBoundSet(const std::vector<T>& reference_point,
+                         const std::vector<T>& anti_reference);
+    
+    void update(const Point<T>& point);                       // O(|U_z̄|) neighborhood-based update
+    
+    std::vector<LocalBound<T>> bounds() const;                // All bounds (incl. quasi-nonredundant)
+    std::vector<LocalBound<T>> nonredundant_bounds() const;   // Excludes quasi-nonredundant
+    std::size_t size() const;                                 // Total count (incl. quasi-nonredundant)
+    std::size_t nonredundant_size() const;                    // Nonredundant count only
+    std::size_t dimensions() const;
+    bool is_in_search_region(const std::vector<T>& point) const;
+    std::optional<LocalBound<T>> find_containing_bound(const std::vector<T>& point) const;
+};
+```
+
+### BoundSet (Algorithms 2–5 — Paper 1)
 
 ```cpp
 template <typename T = double, Objective Sense = Objective::MINIMIZE>
@@ -192,12 +262,12 @@ class BoundSet {
     BoundSet(const std::vector<T>& reference_point,
              const std::vector<T>& anti_reference);
     
-    void update_auto(const Point<T>& point);         // Auto-select best algorithm based on p
-    void update_naive(const Point<T>& point);        // Naive
+    void update_auto(const Point<T>& point);            // Auto-select best algorithm based on p
+    void update_naive(const Point<T>& point);           // Naive
     void update_re(const Point<T>& point);              // Algorithm 2 (RE)
     void update_re_enhanced(const Point<T>& point);     // Algorithm 3 (Enhanced RE)
-    void update_ra_sa(const Point<T>& point); // Algorithm 4 (RA, General Position)
-    void update_ra(const Point<T>& point);    // Algorithm 5 (RA, General Case)
+    void update_ra_sa(const Point<T>& point);           // Algorithm 4 (RA, General Position)
+    void update_ra(const Point<T>& point);              // Algorithm 5 (RA, General Case)
     
     const std::vector<LocalBound<T>>& bounds() const;
     std::size_t size() const;
@@ -225,12 +295,13 @@ discuss the approach.
 
 ## Citation
 
-If you use this library in your research, please cite the original paper:
+If you use this library in your research, please cite the original papers and this implementation as follows:
 
 ```bibtex
 @software{lopes2026localboundsmo,
   author       = {Lopes, Gon{\c{c}}alo},
-  title = {{Local Bounds Library}: C++ header-only implementation of local bounds algorithms for multiobjective optimization},
+  title        = {{Local Bounds Library}: C++ header-only implementation of
+                  local bounds algorithms for multiobjective optimization},
   year         = {2026},
   url          = {https://github.com/gaplopes/local-bounds-mo}
 }
