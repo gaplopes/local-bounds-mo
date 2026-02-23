@@ -438,11 +438,11 @@ void test_bound_coordinates() {
 }
 
 /**
- * Test with non-general-position points (duplicate component values).
+ * Test with general case position points (duplicate component values).
  * Algorithm 5 should handle these correctly via Z^k(u) sets.
  */
 void test_non_general_position() {
-    std::cout << "\n=== Testing Non-General-Position Points ===" << std::endl;
+    std::cout << "\n=== Testing General-Case Points ===" << std::endl;
 
     const int64_t M = 100;
     const int64_t m = 0;
