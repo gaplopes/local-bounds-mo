@@ -390,6 +390,16 @@ void run_benchmarks(
           "Algorithm 3", sense_str, inst_str, points, dims, ref_val, anti_ref_val);
       print_result(out, alg3);
 
+      // Algorithm 2 (LBTree): Tree-accelerated Redundancy Elimination
+      auto alg2_tree = run_benchmark<Sense, BoundSetTree<int64_t, Sense>, &BoundSetTree<int64_t, Sense>::update_re>(
+          "Algorithm 2 (LBTree)", sense_str, inst_str, points, dims, ref_val, anti_ref_val);
+      print_result(out, alg2_tree);
+
+      // Algorithm 3 (LBTree): Tree-accelerated Enhanced RE
+      auto alg3_tree = run_benchmark<Sense, BoundSetTree<int64_t, Sense>, &BoundSetTree<int64_t, Sense>::update_re_enhanced>(
+          "Algorithm 3 (LBTree)", sense_str, inst_str, points, dims, ref_val, anti_ref_val);
+      print_result(out, alg3_tree);
+
       // Algorithm 4: Redundancy Avoidance (General Position only)
       BenchmarkResult alg4{};
       if (instance_type == InstanceType::GENERAL_POSITION) {
@@ -460,6 +470,9 @@ void run_benchmarks(
             &BoundSet<int64_t, Sense>::update_re,
             &BoundSet<int64_t, Sense>::update_ra>(
             out, "Algorithm 2", "Algorithm 5", points, dims, ref_val, anti_ref_val, comparison_limit);
+      }
+      if (alg2.final_bounds != alg2_tree.final_bounds) {
+        out << "  [WARNING] Final bound counts differ between Algorithm 2 and Algorithm 2 (LBTree)\n";
       }
     }
   }

@@ -132,9 +132,9 @@ for (const auto& b : bounds.bounds()) {
 You can also choose a specific algorithm explicitly:
 
 ```cpp
-// For p <= 5: Algorithm 3 (Enhanced RE) — single-argument constructor suffices
+// For p <= 5: Algorithm 2 (RE) — single-argument constructor suffices
 BoundSet<double, Objective::MINIMIZE> bounds_re({100.0, 100.0});
-bounds_re.update_re_enhanced(Point<double>("z1", {30.0, 70.0}));
+bounds_re.update_re(Point<double>("z1", {30.0, 70.0}));
 
 // For p >= 6: Algorithm 4 or 5 (RA) — requires both reference and anti-reference
 std::vector<double> nadir = {100.0, 100.0, 100.0, 100.0, 100.0, 100.0};
@@ -153,7 +153,10 @@ local-bounds-mo/
 │       ├── types.hpp                 # Point<T>, LocalBound<T>, Objective enum
 │       ├── dominance.hpp             # Dominance relation functions
 │       ├── bound_set.hpp             # BoundSet<T, Sense> with Algorithms 2–5
+│       ├── bound_set_tree.hpp        # BoundSetTree<T, Sense> with Algorithms 2–3 accelerated by LBTree
 │       └── neighborhood_bound_set.hpp # NeighborhoodBoundSet<T, Sense> (Algorithm 1)
+├── structures/
+│   └── lb_tree.hpp                   # LBTree (Local Bounds Tree)
 ├── tests/
 │   ├── test_dominance.cpp            # Dominance relation tests
 │   ├── test_bound_set.cpp            # BoundSet tests
@@ -270,6 +273,28 @@ class BoundSet {
     void update_ra(const Point<T>& point);              // Algorithm 5 (RA, General Case)
     
     const std::vector<LocalBound<T>>& bounds() const;
+    std::size_t size() const;
+    std::size_t dimensions() const;
+    bool is_in_search_region(const std::vector<T>& point) const;
+};
+```
+
+### BoundSetTree (Algorithms 2–3 — Accelerated by LBTree)
+
+> **What is LBTree?** The `LBTree` (Local Bounds Tree) is a specialized spatial index based on R-tree geometries that recursively clusters points and provides fast multidimensional box pruning capabilities. It substantially accelerates Redundancy Elimination by reducing exhaustive bound inspections.
+
+```cpp
+template <typename T = double, Objective Sense = Objective::MINIMIZE>
+class BoundSetTree {
+    // Requires reference point (and optionally anti-reference, max_leaf_size, num_children)
+    BoundSetTree(const std::vector<T>& reference_point);
+    
+    void update_auto(const Point<T>& point);            // Delegates to update_re_enhanced
+    void update_naive(const Point<T>& point);           // Delegates to update_re
+    void update_re(const Point<T>& point);              // Algorithm 2 (RE) accelerated by LBTree
+    void update_re_enhanced(const Point<T>& point);     // Algorithm 3 (Enhanced RE) accelerated by LBTree
+    
+    std::vector<LocalBound<T>> bounds() const;
     std::size_t size() const;
     std::size_t dimensions() const;
     bool is_in_search_region(const std::vector<T>& point) const;
