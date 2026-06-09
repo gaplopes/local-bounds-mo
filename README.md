@@ -1,5 +1,11 @@
 # Local Bounds Library
 
+[![CI](https://github.com/gaplopes/local-bounds-mo/actions/workflows/ci.yml/badge.svg)](https://github.com/gaplopes/local-bounds-mo/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://isocpp.org/)
+[![CMake 3.14+](https://img.shields.io/badge/CMake-3.14%2B-blue.svg)](https://cmake.org/)
+[![Header-only](https://img.shields.io/badge/Type-Header--only-success.svg)](#)
+
 > Header-only C++ library for maintaining local upper/lower bounds in multiobjective optimization.
 
 Based on two papers:
@@ -110,7 +116,8 @@ The simplest way is to use `update_auto()`, which selects the best algorithm bas
 using namespace local_bounds;
 
 // Provide both reference (nadir) and anti-reference (ideal) points
-// so that update_auto() can use RA algorithms when p >= 6
+// so that update_auto() can use RA algorithms when p >= 6.
+// For p <= 5, update_auto() currently dispatches to Algorithm 2 (RE).
 BoundSet<double, Objective::MINIMIZE> bounds(
     {100.0, 100.0, 100.0},  // nadir (reference)
     {  0.0,   0.0,   0.0}   // ideal (anti-reference)
@@ -149,14 +156,15 @@ bounds_ra.update_ra(Point<double>("z1", {10.0, 50.0, 30.0, 70.0, 20.0, 60.0}));
 local-bounds-mo/
 ├── include/
 │   ├── local_bounds.hpp              # Single-include entry point
-│   └── local_bounds/
-│       ├── types.hpp                 # Point<T>, LocalBound<T>, Objective enum
-│       ├── dominance.hpp             # Dominance relation functions
-│       ├── bound_set.hpp             # BoundSet<T, Sense> with Algorithms 2–5
-│       ├── bound_set_tree.hpp        # BoundSetTree<T, Sense> with Algorithms 2–3 accelerated by LBTree
-│       └── neighborhood_bound_set.hpp # NeighborhoodBoundSet<T, Sense> (Algorithm 1)
-├── structures/
-│   └── lb_tree.hpp                   # LBTree (Local Bounds Tree)
+│   ├── local_bounds/
+│   │   ├── types.hpp                 # Point<T>, LocalBound<T>, Objective enum
+│   │   ├── dominance.hpp             # Dominance relation functions
+│   │   ├── bound_set.hpp             # BoundSet<T, Sense> with Algorithms 2–5
+│   │   ├── bound_set_tree.hpp        # BoundSetTree<T, Sense> with Algorithms 2–3 accelerated by LBTree
+│   │   └── neighborhood_bound_set.hpp # NeighborhoodBoundSet<T, Sense> (Algorithm 1)
+│   └── structures/
+│       ├── lb_tree.hpp               # LBTree (Local Bounds Tree)
+│       └── linear_list.hpp           # O(N) internal baseline list for testing
 ├── tests/
 │   ├── test_dominance.cpp            # Dominance relation tests
 │   ├── test_bound_set.cpp            # BoundSet tests
@@ -168,6 +176,11 @@ local-bounds-mo/
 ├── CMakeLists.txt
 └── CMakePresets.json                  # debug, release, dev presets
 ```
+
+## Requirements
+
+- **C++17** or higher
+- **CMake 3.14** or higher (CMake 3.21+ required if using the provided `CMakePresets.json`)
 
 ## Installation
 
@@ -276,6 +289,7 @@ class BoundSet {
     std::size_t size() const;
     std::size_t dimensions() const;
     bool is_in_search_region(const std::vector<T>& point) const;
+    std::optional<LocalBound<T>> find_containing_bound(const std::vector<T>& point) const;
 };
 ```
 
@@ -298,6 +312,7 @@ class BoundSetTree {
     std::size_t size() const;
     std::size_t dimensions() const;
     bool is_in_search_region(const std::vector<T>& point) const;
+    std::optional<LocalBound<T>> find_containing_bound(const std::vector<T>& point) const;
 };
 ```
 
@@ -323,7 +338,7 @@ discuss the approach.
 If you use this library in your research, please cite the original papers and this implementation as follows:
 
 ```bibtex
-@software{lopes2026localboundsmo,
+@software{localboundsmo,
   author       = {Lopes, Gon{\c{c}}alo},
   title        = {{Local Bounds Library}: C++ header-only implementation of
                   local bounds algorithms for multiobjective optimization},
