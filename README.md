@@ -1,4 +1,4 @@
-# Local Bounds Library
+# Local-Bounds-MO Library
 
 [![CI](https://github.com/gaplopes/local-bounds-mo/actions/workflows/ci.yml/badge.svg)](https://github.com/gaplopes/local-bounds-mo/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
@@ -325,6 +325,24 @@ bool strictly_dominates(const std::vector<T>& v1, const std::vector<T>& v2);
 bool dominates(const std::vector<T>& v1, const std::vector<T>& v2);
 bool incomparable(const std::vector<T>& v1, const std::vector<T>& v2);
 ```
+
+## Benchmarks
+
+The library includes a benchmarking tool (`benchmark/benchmark.cpp`) that evaluates the performance of the various algorithms by replicating the experiments from the original papers. It generates random stable sets of nondominated points and measures:
+
+- The final number of local bounds (`|U(N)|`)
+- The computation time (in milliseconds) for each algorithm
+- The average number of bounds updated per point insertion (`|A|`)
+
+To build and run the benchmarks, make sure to compile in Release mode:
+
+```bash
+cmake -B build -DBUILD_BENCHMARK=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+./build/benchmark
+```
+
+The tool will run iterations for both minimization and maximization, across both *General Position* and *General Case* instance types. Results are printed to standard output and automatically saved to `benchmark_results.txt`.
 
 ## Contributing
 
