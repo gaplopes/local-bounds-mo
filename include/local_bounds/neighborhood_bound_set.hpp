@@ -307,6 +307,112 @@ class NeighborhoodBoundSet {
     return std::nullopt;
   }
 
+  // --- Adjacency Graph Access ---
+
+  /**
+   * @brief Returns the maximum internal node index (capacity of the graph).
+   * Valid node indices are in the range [0, max_node_index()).
+   */
+  [[nodiscard]] std::size_t max_node_index() const {
+    return nodes_.size();
+  }
+
+  /**
+   * @brief Checks if a specific node index is currently active in the graph.
+   */
+  [[nodiscard]] bool is_active(std::size_t node_idx) const {
+    return node_idx < nodes_.size() && nodes_[node_idx].is_active;
+  }
+
+  /**
+   * @brief Provides zero-cost read access to the neighbors of a specific node.
+   * Elements with value `npos` indicate no neighbor on that component axis.
+   */
+  [[nodiscard]] const std::vector<std::size_t>& get_neighbors(std::size_t node_idx) const {
+    return nodes_[node_idx].neighbors;
+  }
+
+  /**
+   * @brief Returns a clean vector of non-redundant neighbors for a given node.
+   * 
+   * This automatically bypasses any quasi-nonredundant nodes (which exist only 
+   * to preserve graph connectivity in non-general position cases), effectively
+   * contracting them to give you a direct connection to the genuine reference points.
+   * 
+   * @param node_idx The internal index of the node.
+   * @return std::vector<std::size_t> A list of valid, non-redundant neighbor indices.
+   */
+  [[nodiscard]] std::vector<std::size_t> get_clean_neighbors(std::size_t node_idx) const {
+    std::vector<std::size_t> clean_neighbors;
+    std::vector<std::size_t> to_visit;
+    std::vector<bool> visited(nodes_.size(), false);
+    
+    visited[node_idx] = true;
+    for (std::size_t n : nodes_[node_idx].neighbors) {
+      if (n != npos) to_visit.push_back(n);
+    }
+    
+    std::size_t head = 0;
+    while (head < to_visit.size()) {
+      std::size_t curr = to_visit[head++];
+      if (visited[curr]) continue;
+      visited[curr] = true;
+      
+      if (!is_quasi_nonredundant(curr)) {
+        clean_neighbors.push_back(curr);
+      } else {
+        for (std::size_t nn : nodes_[curr].neighbors) {
+          if (nn != npos && !visited[nn]) {
+            to_visit.push_back(nn);
+          }
+        }
+      }
+    }
+    return clean_neighbors;
+  }
+
+  struct AdjacencyGraph {
+    std::vector<LocalBound<T>> nodes;
+    std::vector<std::vector<std::size_t>> adjacency_list;
+  };
+
+  /**
+   * @brief Extracts a clean, dense adjacency graph of all valid reference points.
+   * 
+   * This completely abstracts away internal inactive nodes and quasi-nonredundant 
+   * bridges. The returned graph has contiguous indices from 0 to N-1, where N is 
+   * the number of valid non-redundant local bounds.
+   */
+  [[nodiscard]] AdjacencyGraph get_adjacency_graph() const {
+    AdjacencyGraph graph;
+    std::vector<std::size_t> internal_to_dense(nodes_.size(), npos);
+    
+    // 1. Assign dense IDs to valid non-redundant nodes
+    for (std::size_t i = 0; i < nodes_.size(); ++i) {
+      if (nodes_[i].is_active && !is_quasi_nonredundant(i)) {
+        internal_to_dense[i] = graph.nodes.size();
+        graph.nodes.push_back(nodes_[i].bound);
+      }
+    }
+    
+    graph.adjacency_list.resize(graph.nodes.size());
+    
+    // 2. Build the dense adjacency list using clean neighbors
+    for (std::size_t i = 0; i < nodes_.size(); ++i) {
+      if (internal_to_dense[i] != npos) {
+        std::vector<std::size_t> clean_internal = get_clean_neighbors(i);
+        std::vector<std::size_t> dense_neighbors;
+        dense_neighbors.reserve(clean_internal.size());
+        for (std::size_t internal_nb : clean_internal) {
+          dense_neighbors.push_back(internal_to_dense[internal_nb]);
+        }
+        graph.adjacency_list[internal_to_dense[i]] = std::move(dense_neighbors);
+      }
+    }
+    
+    return graph;
+  }
+
  private:
   struct Node {
     LocalBound<T> bound;
