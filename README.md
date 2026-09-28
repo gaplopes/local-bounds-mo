@@ -3,8 +3,9 @@
 [![CI](https://github.com/gaplopes/local-bounds-mo/actions/workflows/ci.yml/badge.svg)](https://github.com/gaplopes/local-bounds-mo/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://isocpp.org/)
-[![CMake 3.14+](https://img.shields.io/badge/CMake-3.14%2B-blue.svg)](https://cmake.org/)
+[![CMake 3.15+](https://img.shields.io/badge/CMake-3.15%2B-blue.svg)](https://cmake.org/)
 [![Header-only](https://img.shields.io/badge/Type-Header--only-success.svg)](#)
+[![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
 
 > Header-only C++ library for maintaining local upper/lower bounds in multiobjective optimization.
 
@@ -17,6 +18,7 @@ This library is an **independent C++ reimplementation** of the algorithms descri
 ## Features
 
 - **Header-only** - Just include and use
+- **Python bindings** - Also available as a `pip`-installable Python package (via [nanobind](https://github.com/wjakob/nanobind))
 - **Min/Max support** - Works for both minimization and maximization problems
 - **Template-based** - Supports any numeric type (`int`, `int64_t`, `double`, etc.)
 - **Redundancy Algorithms from Paper 1** (via `BoundSet`):
@@ -150,6 +152,50 @@ BoundSet<double, Objective::MINIMIZE> bounds_ra(nadir, ideal);
 bounds_ra.update_ra(Point<double>("z1", {10.0, 50.0, 30.0, 70.0, 20.0, 60.0}));
 ```
 
+### Python Quick Start
+
+The library is also available as a Python package. Install it with `pip`:
+
+```bash
+pip install .
+```
+
+Then use it in Python:
+
+```python
+from local_bounds import BoundSet, NeighborhoodBoundSet, Point, Objective
+
+# BoundSet with sense parameter (defaults to MINIMIZE)
+bs = BoundSet([100.0, 100.0, 100.0], sense=Objective.MINIMIZE)
+
+bs.update_auto(Point("z1", [30.0, 70.0, 50.0]))
+bs.update_auto(Point("z2", [50.0, 50.0, 40.0]))
+
+print(f"Number of bounds: {bs.size()}")
+for b in bs.bounds:
+    print(f"  {b}")
+
+# Check if a point is in the search region
+print(bs.is_in_search_region([40.0, 60.0, 45.0]))
+```
+
+NeighborhoodBoundSet works similarly:
+
+```python
+nbs = NeighborhoodBoundSet(
+    [100.0, 100.0, 100.0],  # reference (nadir)
+    [0.0, 0.0, 0.0],        # anti-reference (ideal)
+    sense=Objective.MINIMIZE
+)
+
+nbs.update(Point("z1", [30.0, 70.0, 50.0]))
+nbs.update(Point("z2", [50.0, 50.0, 40.0]))
+
+print(f"Total: {nbs.size()}, Nonredundant: {nbs.nonredundant_size()}")
+```
+
+> **Note:** The Python bindings use `double` coordinates. The `sense` parameter (`Objective.MINIMIZE` or `Objective.MAXIMIZE`) replaces the C++ template parameter.
+
 ## Project Structure
 
 ```
@@ -165,6 +211,10 @@ local-bounds-mo/
 │   └── structures/
 │       ├── lb_tree.hpp               # LBTree (Local Bounds Tree)
 │       └── linear_list.hpp           # O(N) internal baseline list for testing
+├── python/
+│   ├── bindings.cpp                  # nanobind C++ bindings
+│   └── local_bounds/
+│       └── __init__.py               # Python package with unified API
 ├── tests/
 │   ├── test_dominance.cpp            # Dominance relation tests
 │   ├── test_bound_set.cpp            # BoundSet tests
@@ -173,6 +223,7 @@ local-bounds-mo/
 │   └── basic_usage.cpp               # Min/max/dominance usage examples
 ├── benchmark/
 │   └── benchmark.cpp                 # Performance comparison across algorithms
+├── pyproject.toml                    # Python package configuration (scikit-build-core + nanobind)
 ├── CMakeLists.txt
 └── CMakePresets.json                  # debug, release, dev presets
 ```
@@ -226,6 +277,16 @@ target_link_libraries(your_target PRIVATE local_bounds::local_bounds)
 ### Option 4 — Copy the headers
 
 Since this is a header-only library, you can simply copy the `include/` directory into your project and add it to your include path.
+
+### Option 5 — Python package (pip)
+
+If you want to use the library from Python, install it directly with `pip`:
+
+```bash
+pip install .
+```
+
+This compiles the C++ code with [nanobind](https://github.com/wjakob/nanobind) and installs `local_bounds` as a regular Python package. Requires a C++17 compiler and CMake 3.15+.
 
 ## Building
 
@@ -324,6 +385,50 @@ bool weakly_dominates(const std::vector<T>& v1, const std::vector<T>& v2);
 bool strictly_dominates(const std::vector<T>& v1, const std::vector<T>& v2);
 bool dominates(const std::vector<T>& v1, const std::vector<T>& v2);
 bool incomparable(const std::vector<T>& v1, const std::vector<T>& v2);
+```
+
+### Python API
+
+The Python package exposes the same classes through a unified API where the `sense` parameter replaces the C++ template parameter:
+
+```python
+class BoundSet:
+    def __init__(self, reference_point, anti_reference=None, sense=Objective.MINIMIZE): ...
+    def update_auto(self, point): ...
+    def update_re(self, point): ...
+    def update_re_enhanced(self, point): ...
+    def update_ra_sa(self, point): ...
+    def update_ra(self, point): ...
+    def update_naive(self, point): ...
+    def size(self) -> int: ...
+    def dimensions(self) -> int: ...
+    def is_in_search_region(self, point: list[float]) -> bool: ...
+    def find_containing_bound(self, point: list[float]) -> LocalBound | None: ...
+    bounds: list[LocalBound]  # read-only property
+
+class NeighborhoodBoundSet:
+    def __init__(self, reference_point, anti_reference, sense=Objective.MINIMIZE): ...
+    def update(self, point): ...
+    def size(self) -> int: ...
+    def nonredundant_size(self) -> int: ...
+    def dimensions(self) -> int: ...
+    def is_in_search_region(self, point: list[float]) -> bool: ...
+    def find_containing_bound(self, point: list[float]) -> LocalBound | None: ...
+    def bounds(self) -> list[LocalBound]: ...
+    def nonredundant_bounds(self) -> list[LocalBound]: ...
+
+class BoundSetTree:
+    def __init__(self, reference_point, anti_reference=None, max_leaf_size=32,
+                 num_children=8, sense=Objective.MINIMIZE): ...
+    def update_auto(self, point): ...
+    def update_re(self, point): ...
+    def update_re_enhanced(self, point): ...
+    def update_naive(self, point): ...
+    def size(self) -> int: ...
+    def dimensions(self) -> int: ...
+    def is_in_search_region(self, point: list[float]) -> bool: ...
+    def find_containing_bound(self, point: list[float]) -> LocalBound | None: ...
+    bounds: list[LocalBound]  # read-only property
 ```
 
 ## Benchmarks

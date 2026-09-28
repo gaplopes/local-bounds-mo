@@ -1,0 +1,24 @@
+[build-system]
+requires = ["scikit-build-core", "nanobind"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "local_bounds"
+version = "1.0.0"
+description = "Local bounds library for multiobjective optimization"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+  { name = "Gabriel Lopes" },
+]
+dependencies = []
+
+[tool.scikit-build]
+cmake.args = [
+    "-DBUILD_PYTHON_BINDINGS=ON",
+    "-DBUILD_TESTS=OFF",
+    "-DBUILD_EXAMPLES=OFF",
+    "-DBUILD_BENCHMARK=OFF"
+]
+build.targets = ["_core"]
+wheel.packages = ["python/local_bounds"]

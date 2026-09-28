@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.15)
 
 project(LocalBounds
     VERSION 1.0.0
@@ -90,3 +90,18 @@ install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/local_bounds-config-version.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/local_bounds
 )
+
+# Python Bindings
+option(BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
+if(BUILD_PYTHON_BINDINGS)
+    find_package(Python COMPONENTS Interpreter Development REQUIRED)
+    find_package(nanobind CONFIG REQUIRED)
+    
+    # We create a python extension module named _core
+    nanobind_add_module(_core python/bindings.cpp)
+    target_link_libraries(_core PRIVATE local_bounds)
+    
+    # Optional: adjust visibility
+    set_target_properties(_core PROPERTIES CXX_VISIBILITY_PRESET "hidden")
+    install(TARGETS _core DESTINATION local_bounds)
+endif()
