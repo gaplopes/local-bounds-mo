@@ -154,10 +154,16 @@ bounds_ra.update_ra(Point<double>("z1", {10.0, 50.0, 30.0, 70.0, 20.0, 60.0}));
 
 ### Python Quick Start
 
-The library is also available as a Python package. Install it with `pip`:
+The library is also available as a Python package. Create a virtual environment and install it:
 
 ```bash
-pip install .
+# 1. Create and activate a virtual environment (recommended)
+python3 -m venv venv
+source venv/bin/activate
+
+# 2. Install the local_bounds package
+pip install -e .     # Editable install (recommended for development)
+# OR: pip install .  # Standard install
 ```
 
 Then use it in Python:
@@ -283,7 +289,11 @@ Since this is a header-only library, you can simply copy the `include/` director
 If you want to use the library from Python, install it directly with `pip`:
 
 ```bash
+# Basic package (C++ extension & core algorithms)
 pip install .
+
+# Or install with visualization dependencies (Flask, Plotly, NetworkX)
+pip install ".[vis]"
 ```
 
 This compiles the C++ code with [nanobind](https://github.com/wjakob/nanobind) and installs `local_bounds` as a regular Python package. Requires a C++17 compiler and CMake 3.15+.
@@ -416,6 +426,7 @@ class NeighborhoodBoundSet:
     def find_containing_bound(self, point: list[float]) -> LocalBound | None: ...
     def bounds(self) -> list[LocalBound]: ...
     def nonredundant_bounds(self) -> list[LocalBound]: ...
+    def get_adjacency_graph(self) -> AdjacencyGraph: ...
 
 class BoundSetTree:
     def __init__(self, reference_point, anti_reference=None, max_leaf_size=32,
@@ -430,6 +441,94 @@ class BoundSetTree:
     def find_containing_bound(self, point: list[float]) -> LocalBound | None: ...
     bounds: list[LocalBound]  # read-only property
 ```
+
+## Visualization & Interactive Dashboard
+
+The library provides comprehensive 2D and 3D visualization tools, neighbor graph rendering, local bounds tables, and an interactive dashboard mirroring the figures from Klamroth et al. (2015) and Dächert et al. (2017).
+
+All visualization code is organized in the [`visualization/`](visualization/) package with HTML templates decoupled in `visualization/templates/index.html`.
+
+### Prerequisites & Installation
+
+To run the visualization dashboard or generate reports, make sure your virtual environment has the required dependencies:
+
+```bash
+# 1. Activate your virtual environment
+source venv/bin/activate
+
+# 2. Install visualization dependencies (Flask, Plotly, NetworkX)
+pip install ".[vis]"
+# Or via requirements file:
+pip install -r visualization/requirements.txt
+# Or directly:
+pip install flask plotly networkx
+```
+
+### Interactive Web Dashboard
+
+Launch the interactive dashboard:
+
+```bash
+python -m visualization.app --port 8050
+```
+
+Open `http://127.0.0.1:8050` in your browser. Features include:
+- **In-Place Problem Configuration**: Directly switch between 2D and 3D, toggle Minimization ($U(N)$) vs Maximization ($L(N)$), and customize Lower Bound ($LB$) and Upper Bound ($UB$) search spaces without intrusive popups.
+- **Strict Point Validation**: Automatically checks for dimension matching, finite coordinates, search space containment $[LB, UB]$, duplicate points, and Pareto dominance violations (points dominated by $N$ or dominating existing points in $N$) with clean, non-intrusive inline error banners.
+- **Generation Timeline Slider**: Step forward and backward through point insertions, tracking destroyed, created, and persistent bounds.
+- **3D & 2D Spatial Views**:
+  - 3D view: Solid, uniquely color-coded Pareto dominance cones $D(z) = [z, M]$ (matching Fig. 2 in Klamroth et al. 2015), opposite-axis camera perspective (looking from Ideal $m$ towards Nadir $M$), real-time interactive opacity slider, and single unified legend entry for one-click toggling.
+  - Centered Pairwise 2D Projections: Centered matrix of projections $(f_1, f_2)$, $(f_1, f_3)$, $(f_2, f_3)$ showing bounding boxes.
+  - 2D view: 2D search rectangles and staircase Pareto front.
+- **Neighbor Graph Visualization**: Interactive physics network (Vis-Network) with generous spacing between nodes and edges, supporting both Combined Multi-Graph (with $\nu_k$ component arrows) and Undirected Graph $G$ (Paper 2 Fig. 3).
+- **Local Bounds Table**: Displays coordinates $u$, defining points $z^j(u)$ (e.g. $z^1, z^2, z^3$), and neighbor pointers $\nu_k(u)$, with cross-highlighting across scenes and graphs.
+- **Preset Library**: One-click presets for Paper 2 Example 2.8, Paper 1 Example 2 (SA), Paper 1 Example 3 (NGP Ties), 2D, and 3D Maximization.
+
+### Command-Line Visualization Script
+
+Generate standalone HTML reports from terminal:
+
+```bash
+# 3D with Paper 2 Example 2.8 preset and step-by-step terminal output
+python -m visualization.cli --dim 3 --preset paper2 --step-by-step --output report_3d.html
+
+# 2D example
+python -m visualization.cli --dim 2 --preset 2d --step-by-step --output report_2d.html
+
+# Custom points
+python -m visualization.cli --dim 3 --points "[[4,0,4],[3,3,1],[2,2,2]]" --output custom.html
+
+# Or launch the dashboard directly via CLI
+python -m visualization.cli --interactive --port 8050
+```
+
+### Python API Visualization
+
+```python
+import local_bounds as lb
+import visualization.engine as vis
+
+# Initialize bound set
+nbs = lb.NeighborhoodBoundSet([10.0, 10.0, 10.0], [0.0, 0.0, 0.0])
+nbs.update(lb.Point("z1", [4.0, 0.0, 4.0]))
+nbs.update(lb.Point("z2", [3.0, 3.0, 1.0]))
+nbs.update(lb.Point("z3", [2.0, 2.0, 2.0]))
+
+# Extract bounds, defining points, and neighbor relationships
+data = vis.extract_bounds_data(nbs, [10.0, 10.0, 10.0], [0.0, 0.0, 0.0])
+
+# Generate bounds table
+table = vis.create_bounds_table(data)
+
+# Generate Plotly figures
+fig_3d = vis.plot_3d_bounds(data, show_occupied_boxes=True)
+fig_graph = vis.plot_neighbor_graph_plotly(data, mode="combined")
+
+# Show or export
+fig_3d.write_html("bounds_3d.html")
+fig_graph.write_html("graph.html")
+```
+
 
 ## Benchmarks
 
