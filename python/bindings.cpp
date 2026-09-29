@@ -32,6 +32,8 @@ NB_MODULE(_core, m) {
         .def(nb::init<std::string, std::vector<double>>(), nb::arg("id"), nb::arg("coordinates"))
         .def_rw("id", &LocalBound<double>::id)
         .def_rw("coordinates", &LocalBound<double>::coordinates)
+        .def_rw("defining_points", &LocalBound<double>::defining_points)
+        .def_rw("defining_point_sets", &LocalBound<double>::defining_point_sets)
         .def("dimensions", &LocalBound<double>::dimensions)
         .def("__str__", &LocalBound<double>::to_string)
         .def("__repr__", &LocalBound<double>::to_string)
@@ -68,6 +70,16 @@ NB_MODULE(_core, m) {
         .def("find_containing_bound", &BoundSet<double, Objective::MAXIMIZE>::find_containing_bound, nb::arg("point"))
         .def_prop_ro("bounds", &BoundSet<double, Objective::MAXIMIZE>::bounds);
 
+    nb::class_<NeighborhoodBoundSet<double, Objective::MINIMIZE>::AdjacencyGraph>(m, "AdjacencyGraphMinimize")
+        .def_ro("nodes", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::AdjacencyGraph::nodes)
+        .def_ro("adjacency_list", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::AdjacencyGraph::adjacency_list)
+        .def_ro("k_neighbors", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::AdjacencyGraph::k_neighbors);
+
+    nb::class_<NeighborhoodBoundSet<double, Objective::MAXIMIZE>::AdjacencyGraph>(m, "AdjacencyGraphMaximize")
+        .def_ro("nodes", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::AdjacencyGraph::nodes)
+        .def_ro("adjacency_list", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::AdjacencyGraph::adjacency_list)
+        .def_ro("k_neighbors", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::AdjacencyGraph::k_neighbors);
+
     nb::class_<NeighborhoodBoundSet<double, Objective::MINIMIZE>>(m, "NeighborhoodBoundSetMinimize")
         .def(nb::init<const std::vector<double>&, const std::vector<double>&>(), nb::arg("reference_point"), nb::arg("anti_reference"))
         .def("update", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::update, nb::arg("point"))
@@ -77,7 +89,8 @@ NB_MODULE(_core, m) {
         .def("is_in_search_region", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::is_in_search_region, nb::arg("point"))
         .def("find_containing_bound", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::find_containing_bound, nb::arg("point"))
         .def("bounds", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::bounds)
-        .def("nonredundant_bounds", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::nonredundant_bounds);
+        .def("nonredundant_bounds", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::nonredundant_bounds)
+        .def("get_adjacency_graph", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::get_adjacency_graph);
 
     nb::class_<NeighborhoodBoundSet<double, Objective::MAXIMIZE>>(m, "NeighborhoodBoundSetMaximize")
         .def(nb::init<const std::vector<double>&, const std::vector<double>&>(), nb::arg("reference_point"), nb::arg("anti_reference"))
@@ -88,7 +101,8 @@ NB_MODULE(_core, m) {
         .def("is_in_search_region", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::is_in_search_region, nb::arg("point"))
         .def("find_containing_bound", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::find_containing_bound, nb::arg("point"))
         .def("bounds", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::bounds)
-        .def("nonredundant_bounds", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::nonredundant_bounds);
+        .def("nonredundant_bounds", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::nonredundant_bounds)
+        .def("get_adjacency_graph", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::get_adjacency_graph);
 
     nb::class_<BoundSetTree<double, Objective::MINIMIZE>>(m, "BoundSetTreeMinimize")
         .def(nb::init<const std::vector<double>&, size_t, size_t>(), 

@@ -53,6 +53,7 @@ class NeighborhoodBoundSet:
     def find_containing_bound(self, point): return self._impl.find_containing_bound(point)
     def bounds(self): return self._impl.bounds()
     def nonredundant_bounds(self): return self._impl.nonredundant_bounds()
+    def get_adjacency_graph(self): return self._impl.get_adjacency_graph()
 
 class BoundSetTree:
     def __init__(self, reference_point, anti_reference=None, max_leaf_size=32, num_children=8, sense=Objective.MINIMIZE):
