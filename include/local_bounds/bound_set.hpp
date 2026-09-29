@@ -628,6 +628,9 @@ private:
       }
     }
 
+    if (A_idx.empty())
+      return;
+
     // Steps 3–4: Update Z^j(u) for ALL bounds u ∈ U(N)
     // Per Proposition 4.1: if z̄_j = u_j and z̄_{-j} < u_{-j}, add z̄ to Z^j(u)
     for (auto &u : current_bounds) {
@@ -649,9 +652,6 @@ private:
         }
       }
     }
-
-    if (A_idx.empty())
-      return;
 
     // Step 2: P ← ∅
     std::vector<LocalBound<T>> P;

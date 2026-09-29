@@ -59,7 +59,7 @@ class NeighborhoodBoundSet {
     if (anti_reference.size() != reference_point.size()) {
       throw std::invalid_argument("Anti-reference must have same dimensions as reference");
     }
-    allocate_node(LocalBound<T>::initial(reference_point, "u0"));
+    allocate_node(LocalBound<T>::initial(reference_point_, anti_reference_, "u0"));
   }
 
   /**
@@ -133,6 +133,12 @@ class NeighborhoodBoundSet {
         LocalBound<T> ui_bound = nodes_[u_idx].bound;
         ui_bound.id = ui_bound.id + std::to_string(i + 1);
         ui_bound.coordinates[i] = z_bar.coordinates[i];
+        if (!ui_bound.defining_points.empty()) {
+          ui_bound.defining_points[i] = z_bar;
+        }
+        if (!ui_bound.defining_point_sets.empty()) {
+          ui_bound.defining_point_sets[i] = {z_bar};
+        }
         
         std::size_t ui_idx = allocate_node(std::move(ui_bound));
         nodes_[u_idx].children[i] = ui_idx;
@@ -374,6 +380,7 @@ class NeighborhoodBoundSet {
   struct AdjacencyGraph {
     std::vector<LocalBound<T>> nodes;
     std::vector<std::vector<std::size_t>> adjacency_list;
+    std::vector<std::vector<std::size_t>> k_neighbors;
   };
 
   /**
@@ -396,17 +403,33 @@ class NeighborhoodBoundSet {
     }
     
     graph.adjacency_list.resize(graph.nodes.size());
+    graph.k_neighbors.resize(graph.nodes.size(), std::vector<std::size_t>(dimensions_, npos));
     
-    // 2. Build the dense adjacency list using clean neighbors
+    // 2. Build the dense adjacency list using clean neighbors and k_neighbors
     for (std::size_t i = 0; i < nodes_.size(); ++i) {
       if (internal_to_dense[i] != npos) {
+        std::size_t dense_u = internal_to_dense[i];
         std::vector<std::size_t> clean_internal = get_clean_neighbors(i);
         std::vector<std::size_t> dense_neighbors;
         dense_neighbors.reserve(clean_internal.size());
         for (std::size_t internal_nb : clean_internal) {
-          dense_neighbors.push_back(internal_to_dense[internal_nb]);
+          if (internal_to_dense[internal_nb] != npos) {
+            dense_neighbors.push_back(internal_to_dense[internal_nb]);
+          }
         }
-        graph.adjacency_list[internal_to_dense[i]] = std::move(dense_neighbors);
+        graph.adjacency_list[dense_u] = std::move(dense_neighbors);
+
+        for (std::size_t k = 0; k < dimensions_; ++k) {
+          std::size_t raw_n = nodes_[i].neighbors[k];
+          while (raw_n != npos && is_quasi_nonredundant(raw_n)) {
+            std::size_t next_n = nodes_[raw_n].neighbors[k];
+            if (next_n == npos || next_n == raw_n) break;
+            raw_n = next_n;
+          }
+          if (raw_n != npos && internal_to_dense[raw_n] != npos) {
+            graph.k_neighbors[dense_u][k] = internal_to_dense[raw_n];
+          }
+        }
       }
     }
     
