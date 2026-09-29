@@ -20,3 +20,17 @@ Thumbs.db
 *.a
 *.so
 *.dylib
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+.pytest_cache/
+venv/
+.env
+
+# Reference papers and scratch text dumps
+*.pdf
+*pdftext.txt

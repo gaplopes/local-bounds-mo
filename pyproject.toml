@@ -13,6 +13,16 @@ authors = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+vis = [
+    "flask>=2.0.0",
+    "plotly>=5.0.0",
+    "networkx>=2.5",
+]
+test = [
+    "pytest",
+]
+
 [tool.scikit-build]
 cmake.args = [
     "-DBUILD_PYTHON_BINDINGS=ON",
