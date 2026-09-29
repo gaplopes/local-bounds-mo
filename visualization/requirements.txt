@@ -1,0 +1,4 @@
+# Visualization dependencies for Local Bounds Visualization Dashboard and CLI
+flask>=2.0.0
+plotly>=5.0.0
+networkx>=2.5

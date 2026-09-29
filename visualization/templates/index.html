@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Local Bounds Visualization</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <!-- Tailwind CSS & Lucide Icons via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- Offline Plotly JS -->
+  <script src="/static/plotly.js"></script>
+  
+  <!-- Vis-Network for Neighbor Graph -->
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background-color: #090d16;
+      color: #e2e8f0;
+    }
+    .font-mono-num {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-variant-numeric: tabular-nums;
+    }
+    .custom-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+    .custom-scroll::-webkit-scrollbar-track { background: #0f172a; }
+    .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+    .custom-scroll::-webkit-scrollbar-thumb:hover { background: #475569; }
+    .panel {
+      background-color: #0f172a;
+      border: 1px solid #1e293b;
+    }
+    .panel-header {
+      background-color: #131d31;
+      border-bottom: 1px solid #1e293b;
+    }
+    .opacity-range {
+      writing-mode: vertical-lr;
+      direction: rtl;
+      width: 6px;
+      appearance: slider-vertical;
+      -webkit-appearance: slider-vertical;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col antialiased select-none">
+
+  <!-- Top Navigation & Problem Settings Bar -->
+  <header class="bg-[#0c1220] border-b border-slate-800 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shadow-md">
+    
+    <!-- Clean, Simple Title -->
+    <div class="flex items-center space-x-2.5">
+      <h1 class="text-sm font-semibold tracking-normal text-slate-100">
+        Local Bounds Visualization
+      </h1>
+    </div>
+
+    <!-- In-Place Configuration Bar -->
+    <div class="flex flex-wrap items-center gap-2.5 text-xs">
+      
+      <!-- Preset Selection -->
+      <div class="flex items-center space-x-1.5 bg-slate-900 border border-slate-800 rounded px-2.5 py-1">
+        <label class="text-[11px] text-slate-400 font-medium">Preset:</label>
+        <select id="preset-select" class="bg-transparent text-slate-200 text-xs focus:outline-none cursor-pointer">
+          <option value="paper2" class="bg-slate-900">Dächert et al. (2017) Ex. 2.8 (3D GP)</option>
+          <option value="paper1_sa" class="bg-slate-900">Klamroth et al. (2015) Ex. 2 (3D SA)</option>
+          <option value="paper1_ngp" class="bg-slate-900">Klamroth et al. (2015) Ex. 3 (3D NGP Ties)</option>
+          <option value="2d" class="bg-slate-900">2-Objective Frontier (2D)</option>
+          <option value="max_3d" class="bg-slate-900">3-Objective Maximization (3D)</option>
+        </select>
+        <button id="btn-load-preset" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-2 py-0.5 rounded text-[11px] font-medium border border-slate-700 transition">
+          Load
+        </button>
+      </div>
+
+      <div class="h-4 w-px bg-slate-800 hidden sm:block"></div>
+
+      <!-- Dimension Selector Pill -->
+      <div class="flex items-center bg-slate-900 border border-slate-800 rounded p-0.5">
+        <button id="btn-dim-2" class="px-2.5 py-0.5 rounded text-[11px] font-medium text-slate-400 hover:text-slate-200 transition">
+          2D
+        </button>
+        <button id="btn-dim-3" class="px-2.5 py-0.5 rounded text-[11px] font-medium bg-slate-800 text-sky-400 border border-slate-700 transition">
+          3D
+        </button>
+      </div>
+
+      <!-- Optimization Sense Toggle: Minimize / Maximize -->
+      <div class="flex items-center bg-slate-900 border border-slate-800 rounded p-0.5">
+        <button id="btn-sense-min" class="px-2.5 py-0.5 rounded text-[11px] font-medium bg-slate-800 text-emerald-400 border border-slate-700 transition">
+          Minimize
+        </button>
+        <button id="btn-sense-max" class="px-2.5 py-0.5 rounded text-[11px] font-medium text-slate-400 hover:text-slate-200 transition">
+          Maximize
+        </button>
+      </div>
+
+      <!-- Lower Bound (m): Ideal in Min, Nadir in Max -->
+      <div class="inline-flex items-center rounded-md bg-slate-900 border border-slate-700/80 shadow-inner overflow-hidden focus-within:border-sky-500 focus-within:ring-1 focus-within:ring-sky-500/40 transition">
+        <div class="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800/90 border-r border-slate-700/80 select-none" id="wrap-lbl-lb" title="Lower bound of search space (Ideal in Min, Nadir in Max)">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400" id="dot-lb"></span>
+          <span id="lbl-lb-name" class="text-[11px] font-semibold text-slate-300">Ideal</span>
+          <span id="lbl-lb-sym" class="font-mono text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1 rounded leading-tight">m</span>
+        </div>
+        <input type="text" id="cfg-lb" value="0.0, 0.0, 0.0" class="w-24 sm:w-28 px-2.5 py-1 bg-transparent font-mono-num text-xs text-slate-100 placeholder-slate-500 focus:outline-none text-center" placeholder="0, 0, 0">
+      </div>
+
+      <!-- Upper Bound (M): Nadir in Min, Ideal in Max -->
+      <div class="inline-flex items-center rounded-md bg-slate-900 border border-slate-700/80 shadow-inner overflow-hidden focus-within:border-sky-500 focus-within:ring-1 focus-within:ring-sky-500/40 transition">
+        <div class="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800/90 border-r border-slate-700/80 select-none" id="wrap-lbl-ub" title="Upper bound of search space (Nadir in Min, Ideal in Max)">
+          <span class="w-1.5 h-1.5 rounded-full bg-amber-400" id="dot-ub"></span>
+          <span id="lbl-ub-name" class="text-[11px] font-semibold text-slate-300">Nadir</span>
+          <span id="lbl-ub-sym" class="font-mono text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1 rounded leading-tight">M</span>
+        </div>
+        <input type="text" id="cfg-ub" value="10.0, 10.0, 10.0" class="w-24 sm:w-28 px-2.5 py-1 bg-transparent font-mono-num text-xs text-slate-100 placeholder-slate-500 focus:outline-none text-center" placeholder="10, 10, 10">
+      </div>
+
+      <!-- Apply Config Button -->
+      <button id="btn-apply-config" class="flex items-center gap-1.5 bg-sky-600 hover:bg-sky-500 text-white px-3 py-1 rounded-md text-xs font-semibold transition-all shadow-sm cursor-pointer hover:shadow-sky-500/20 active:scale-[0.98]">
+        <i data-lucide="check" class="w-3.5 h-3.5"></i>
+        <span>Apply</span>
+      </button>
+
+    </div>
+  </header>
+
+  <!-- Main Content Layout -->
+  <main class="flex-1 p-3 flex flex-col md:flex-row gap-3 overflow-hidden">
+
+    <!-- LEFT SIDEBAR: Step Generation & Points Management -->
+    <aside class="w-full md:w-64 xl:w-72 flex-shrink-0 flex flex-col space-y-3">
+      
+      <!-- Step Generation Slider Card -->
+      <div class="panel rounded border p-3 flex flex-col space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Generation Step</span>
+          <span id="step-badge" class="font-mono-num text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-sky-400 border border-slate-700">
+            Step 3 / 3
+          </span>
+        </div>
+        
+        <p class="text-[11px] text-slate-300 leading-tight" id="step-desc">
+          Point z3 added.
+        </p>
+        
+        <input type="range" id="timeline-slider" min="0" max="3" value="3" class="w-full accent-sky-500 cursor-pointer">
+
+        <div class="grid grid-cols-4 gap-1 text-[11px] pt-1">
+          <button id="btn-first-step" class="bg-slate-800 hover:bg-slate-700 text-slate-300 py-1 rounded border border-slate-700 transition" title="First step">
+            |&lt;
+          </button>
+          <button id="btn-prev-step" class="bg-slate-800 hover:bg-slate-700 text-slate-300 py-1 rounded border border-slate-700 transition" title="Previous step">
+            &lt;
+          </button>
+          <button id="btn-play-pause" class="bg-sky-600 hover:bg-sky-500 text-white py-1 rounded font-medium transition" title="Auto play">
+            Play
+          </button>
+          <button id="btn-next-step" class="bg-slate-800 hover:bg-slate-700 text-slate-300 py-1 rounded border border-slate-700 transition" title="Next step">
+            &gt;
+          </button>
+        </div>
+      </div>
+
+      <!-- Points Set N Card -->
+      <div class="panel rounded border p-3 flex-1 flex flex-col min-h-[300px]">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-red-500"></span> Nondominated Set N
+          </span>
+          <span id="points-count" class="font-mono-num text-[10px] text-slate-400">3 points</span>
+        </div>
+
+        <!-- Inline Error Banner for Point Validation -->
+        <div id="point-error-banner" class="hidden mb-2 p-2 bg-red-950/80 border border-red-800/80 rounded text-[11px] text-red-200 flex items-start justify-between gap-1.5">
+          <div class="flex items-start gap-1.5">
+            <i data-lucide="alert-triangle" class="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5"></i>
+            <span id="point-error-text" class="leading-snug">Validation error message</span>
+          </div>
+          <button type="button" id="btn-dismiss-error" class="text-red-400 hover:text-red-200 text-xs font-bold leading-none">
+            &times;
+          </button>
+        </div>
+
+        <!-- Points Table -->
+        <div class="flex-1 overflow-y-auto custom-scroll border border-slate-800 rounded bg-[#090d16] mb-2.5">
+          <table class="w-full text-xs text-left">
+            <thead class="bg-slate-800/70 text-slate-400 uppercase text-[9px] sticky top-0 border-b border-slate-800">
+              <tr>
+                <th class="py-1 px-2 font-semibold">ID</th>
+                <th class="py-1 px-2 font-semibold">Coordinates</th>
+                <th class="py-1 px-1.5 text-right"></th>
+              </tr>
+            </thead>
+            <tbody id="points-table-body" class="divide-y divide-slate-850 font-mono-num text-[11px]">
+              <!-- Inserted via JS -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Add Point Form with Instant Validation -->
+        <form id="add-point-form" class="space-y-1.5 border-t border-slate-800 pt-2.5">
+          <div class="flex space-x-1.5">
+            <input type="text" id="pt-id" placeholder="ID" class="w-16 bg-slate-900 text-slate-200 text-xs px-2 py-1.5 rounded border border-slate-800 focus:border-sky-500 focus:outline-none">
+            <input type="text" id="pt-coords" placeholder="e.g. 2.0, 2.0, 2.0" class="flex-1 bg-slate-900 font-mono-num text-slate-200 text-xs px-2 py-1.5 rounded border border-slate-800 focus:border-sky-500 focus:outline-none">
+          </div>
+          <button type="submit" class="w-full bg-slate-800 hover:bg-slate-750 text-sky-400 border border-slate-700 text-xs py-1.5 rounded font-medium transition flex items-center justify-center gap-1">
+            <i data-lucide="plus" class="w-3.5 h-3.5"></i> Insert Point into N
+          </button>
+        </form>
+      </div>
+
+    </aside>
+
+    <!-- RIGHT WORKSPACE: Viewport, Bounds Table, and Neighbor Graph -->
+    <section class="flex-1 flex flex-col space-y-3 min-w-0">
+      
+      <!-- Top Row: Spatial Viewport & Local Bounds Table -->
+      <div class="grid grid-cols-12 gap-3 flex-1 min-h-[460px]">
+        
+        <!-- Spatial Viewport (Col 1-7) -->
+        <div class="col-span-12 xl:col-span-7 panel rounded border flex flex-col overflow-hidden shadow-sm">
+          
+          <!-- Viewport Header Toolbar -->
+          <div class="panel-header px-2.5 py-1 flex items-center justify-between text-xs gap-2">
+            <div class="flex items-center space-x-2">
+              <span class="text-[10px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1 select-none">
+                <i data-lucide="eye" class="w-3.5 h-3.5 text-sky-400"></i> View
+              </span>
+              <span class="text-slate-700">|</span>
+              <!-- Segmented View Mode Tab Switcher -->
+              <div class="inline-flex items-center p-0.5 rounded-md bg-slate-900 border border-slate-700 shadow-inner" id="view-mode-container" role="tablist">
+                <button id="tab-spatial"
+                        class="view-tab flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-sky-600 text-white shadow-sm transition-all duration-150 cursor-pointer"
+                        data-tab="spatial"
+                        title="Switch to Spatial View">
+                  <i data-lucide="box" class="w-3.5 h-3.5"></i>
+                  <span id="label-spatial-tab">3D View</span>
+                </button>
+                <button id="tab-pairwise"
+                        class="view-tab flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-all duration-150 cursor-pointer"
+                        data-tab="pairwise"
+                        title="Click to view 2D Pairwise Projections (f₁ vs f₂, f₁ vs f₃, f₂ vs f₃)">
+                  <i data-lucide="columns-3" class="w-3.5 h-3.5"></i>
+                  <span>Pairwise</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Display Toggles -->
+            <div class="flex items-center space-x-2.5 text-slate-300 text-[11px]" id="spatial-controls">
+              <label class="flex items-center gap-1.5 cursor-pointer whitespace-nowrap" title="Toggle Pareto dominance cones [z, M] (Figure 2)">
+                <input type="checkbox" id="toggle-occupied" checked class="rounded accent-sky-500">
+                <span>Dominated Zones D(N)</span>
+              </label>
+              <label class="flex items-center gap-1.5 cursor-pointer whitespace-nowrap" title="Toggle candidate search zones S(u) for local bounds">
+                <input type="checkbox" id="toggle-boxes" class="rounded accent-sky-500">
+                <span>Search Zones S(u)</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Plotly Viewport Container with Floating Controls -->
+          <div class="relative flex-1 w-full h-full min-h-[380px] overflow-hidden">
+            <div id="plotly-container" class="w-full h-full min-h-[380px] bg-[#090d16]"></div>
+
+            <!-- Floating Dominated Zones Opacity Control (Right-Side) -->
+            <div id="opacity-widget" class="absolute right-3 top-1/2 -translate-y-1/2 z-10 flex flex-col items-center bg-slate-900/85 hover:bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-lg py-2 px-1.5 shadow-xl transition-all group select-none" title="Dominated Zones Opacity">
+              <div class="flex items-center justify-center text-slate-400 group-hover:text-sky-400 transition mb-0.5" title="Dominated Zones Opacity">
+                <i data-lucide="layers" class="w-3.5 h-3.5"></i>
+              </div>
+              <span class="text-[9px] font-semibold text-slate-400 uppercase tracking-tight">D(N)</span>
+              <span id="opacity-val-badge" class="font-mono-num text-[10px] font-bold text-sky-400 my-1">100%</span>
+              
+              <div class="py-1 flex items-center justify-center">
+                <input type="range" id="opacity-slider" min="0" max="100" value="100" step="5"
+                       orient="vertical"
+                       class="opacity-range h-28 cursor-pointer accent-sky-500"
+                       title="Drag to adjust Dominated Zones Opacity (0% - 100%)">
+              </div>
+
+              <span class="text-[8px] text-slate-500 font-mono mt-0.5">0%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table of Local Bounds (Col 8-12) -->
+        <div class="col-span-12 xl:col-span-5 panel rounded border flex flex-col overflow-hidden shadow-sm">
+          <div class="panel-header px-3 py-1.5 flex items-center justify-between">
+            <span class="text-[10px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-full bg-sky-400"></span>
+              <span id="bounds-table-title">Local Bounds U(N)</span>
+            </span>
+            <span id="bounds-count" class="font-mono-num text-[11px] font-bold text-sky-400">7 Bounds</span>
+          </div>
+
+          <!-- Table Container -->
+          <div class="flex-1 overflow-auto custom-scroll bg-[#090d16]">
+            <table class="w-full text-xs text-left border-collapse" id="bounds-table">
+              <thead class="bg-slate-800/80 text-slate-400 uppercase text-[9px] sticky top-0 border-b border-slate-800 backdrop-blur">
+                <tr id="bounds-table-headers">
+                  <!-- Injected via JS -->
+                </tr>
+              </thead>
+              <tbody id="bounds-table-body" class="divide-y divide-slate-850 font-mono-num text-[11px]">
+                <!-- Injected via JS -->
+              </tbody>
+            </table>
+          </div>
+          
+          <div class="px-3 py-1.5 bg-[#0c1220] border-t border-slate-800 text-[10px] text-slate-400 flex items-center justify-between">
+            <span>Click row to highlight bound &amp; search region</span>
+            <button id="btn-clear-hl" class="text-sky-400 hover:text-sky-300 hover:underline">Clear Highlight</button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Bottom Row: Neighbor Graph -->
+      <div class="panel rounded border flex flex-col shadow-sm h-[320px] overflow-hidden">
+        
+        <!-- Graph Header & Toolbar -->
+        <div class="panel-header px-3 py-1.5 flex items-center justify-between text-xs">
+          <div class="flex items-center space-x-3">
+            <span class="text-[10px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+              <i data-lucide="share-2" class="w-3.5 h-3.5 text-emerald-400"></i> Adjacency &amp; Neighbor Graph
+            </span>
+            <span class="text-slate-700">|</span>
+            <div class="inline-flex items-center p-0.5 rounded-md bg-slate-900 border border-slate-700 shadow-inner" role="tablist">
+              <button class="px-2.5 py-0.5 rounded text-xs font-semibold bg-sky-600 text-white shadow-sm transition-all duration-150 cursor-pointer graph-mode-btn" data-mode="combined" title="View Combined Multi-Graph with colored component edges">
+                Combined Multi-Graph (νₖ)
+              </button>
+              <button class="px-2.5 py-0.5 rounded text-xs font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-all duration-150 cursor-pointer graph-mode-btn" data-mode="undirected" title="View Undirected Neighborhood Graph G">
+                Undirected Graph G
+              </button>
+            </div>
+          </div>
+
+          <div class="flex items-center space-x-2">
+            <button id="btn-fit-graph" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-0.5 rounded text-[11px] border border-slate-700 transition">
+              Fit View
+            </button>
+            <button id="btn-toggle-physics" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-0.5 rounded text-[11px] border border-slate-700 transition">
+              Freeze Layout
+            </button>
+          </div>
+        </div>
+
+        <!-- Vis-Network Container -->
+        <div id="vis-network-container" class="flex-1 w-full h-full bg-[#090d16]"></div>
+      </div>
+
+    </section>
+  </main>
+
+  <!-- Client Application Logic -->
+  <script>
+    let currentState = null;
+    let currentStep = 0;
+    let activeViewTab = "spatial";
+    let activeGraphMode = "combined";
+    let highlightBoundId = null;
+    let network = null;
+    let isPlaying = false;
+    let playInterval = null;
+    let isPhysicsEnabled = true;
+    let currentDomOpacity = 1.0;
+
+    lucide.createIcons();
+
+    const timelineSlider = document.getElementById("timeline-slider");
+    const stepBadge = document.getElementById("step-badge");
+    const stepDesc = document.getElementById("step-desc");
+    const pointsTableBody = document.getElementById("points-table-body");
+    const boundsTableBody = document.getElementById("bounds-table-body");
+    const boundsTableHeaders = document.getElementById("bounds-table-headers");
+    const plotlyContainer = document.getElementById("plotly-container");
+    const boundsTableTitle = document.getElementById("bounds-table-title");
+
+    const btnDim2 = document.getElementById("btn-dim-2");
+    const btnDim3 = document.getElementById("btn-dim-3");
+    const btnSenseMin = document.getElementById("btn-sense-min");
+    const btnSenseMax = document.getElementById("btn-sense-max");
+    const cfgLb = document.getElementById("cfg-lb");
+    const cfgUb = document.getElementById("cfg-ub");
+
+    const errorBanner = document.getElementById("point-error-banner");
+    const errorText = document.getElementById("point-error-text");
+
+    function showError(msg) {
+      errorText.textContent = msg;
+      errorBanner.classList.remove("hidden");
+    }
+
+    function hideError() {
+      errorBanner.classList.add("hidden");
+    }
+
+    document.getElementById("btn-dismiss-error").onclick = hideError;
+
+    function updateConfigUI() {
+      if (!currentState) return;
+
+      const is2D = (currentState.dimensions === 2);
+      btnDim2.className = is2D
+        ? "px-2.5 py-0.5 rounded text-[11px] font-medium bg-slate-800 text-sky-400 border border-slate-700 transition"
+        : "px-2.5 py-0.5 rounded text-[11px] font-medium text-slate-400 hover:text-slate-200 transition";
+      btnDim3.className = !is2D
+        ? "px-2.5 py-0.5 rounded text-[11px] font-medium bg-slate-800 text-sky-400 border border-slate-700 transition"
+        : "px-2.5 py-0.5 rounded text-[11px] font-medium text-slate-400 hover:text-slate-200 transition";
+
+      const isMin = (currentState.sense === "MINIMIZE");
+      btnSenseMin.className = isMin
+        ? "px-2.5 py-0.5 rounded text-[11px] font-medium bg-slate-800 text-emerald-400 border border-slate-700 transition"
+        : "px-2.5 py-0.5 rounded text-[11px] font-medium text-slate-400 hover:text-slate-200 transition";
+      btnSenseMax.className = !isMin
+        ? "px-2.5 py-0.5 rounded text-[11px] font-medium bg-slate-800 text-emerald-400 border border-slate-700 transition"
+        : "px-2.5 py-0.5 rounded text-[11px] font-medium text-slate-400 hover:text-slate-200 transition";
+
+      // Dynamically label the lower and upper bounds according to optimization sense
+      const lblLbName = document.getElementById("lbl-lb-name");
+      const lblUbName = document.getElementById("lbl-ub-name");
+      const dotLb = document.getElementById("dot-lb");
+      const dotUb = document.getElementById("dot-ub");
+      const symLb = document.getElementById("lbl-lb-sym");
+      const symUb = document.getElementById("lbl-ub-sym");
+      const wrapLb = document.getElementById("wrap-lbl-lb");
+      const wrapUb = document.getElementById("wrap-lbl-ub");
+
+      if (lblLbName) lblLbName.textContent = isMin ? "Ideal" : "Nadir";
+      if (lblUbName) lblUbName.textContent = isMin ? "Nadir" : "Ideal";
+
+      if (dotLb) dotLb.className = isMin ? "w-1.5 h-1.5 rounded-full bg-emerald-400" : "w-1.5 h-1.5 rounded-full bg-amber-400";
+      if (dotUb) dotUb.className = isMin ? "w-1.5 h-1.5 rounded-full bg-amber-400" : "w-1.5 h-1.5 rounded-full bg-emerald-400";
+
+      if (symLb) {
+        symLb.className = isMin
+          ? "font-mono text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1 rounded leading-tight"
+          : "font-mono text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1 rounded leading-tight";
+      }
+      if (symUb) {
+        symUb.className = isMin
+          ? "font-mono text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1 rounded leading-tight"
+          : "font-mono text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1 rounded leading-tight";
+      }
+
+      if (wrapLb) wrapLb.title = isMin ? "Ideal point m (lower bound of search space)" : "Nadir point m (lower bound of search space)";
+      if (wrapUb) wrapUb.title = isMin ? "Nadir point M (upper bound of search space)" : "Ideal point M (upper bound of search space)";
+
+      cfgLb.value = currentState.lower_bound.join(", ");
+      cfgUb.value = currentState.upper_bound.join(", ");
+
+      boundsTableTitle.textContent = "Local Bounds U(N)";
+      document.getElementById("pt-coords").placeholder = is2D ? "e.g. 3.0, 7.0" : "e.g. 2.0, 2.0, 2.0";
+
+      const tabPairwise = document.getElementById("tab-pairwise");
+      const labelSpatialTab = document.getElementById("label-spatial-tab");
+      if (is2D) {
+        if (tabPairwise) tabPairwise.style.display = "none";
+        if (labelSpatialTab) labelSpatialTab.textContent = "2D View";
+        if (activeViewTab === "pairwise") {
+          activeViewTab = "spatial";
+          updateViewTabUI();
+        }
+      } else {
+        if (tabPairwise) tabPairwise.style.display = "inline-flex";
+        if (labelSpatialTab) labelSpatialTab.textContent = "3D View";
+      }
+      syncOpacityWidgetState();
+      lucide.createIcons();
+    }
+
+    async function syncState(step = null) {
+      const url = step !== null ? `/api/state?step=${step}` : "/api/state";
+      const res = await fetch(url);
+      currentState = await res.json();
+      currentStep = currentState.current_step;
+
+      updateConfigUI();
+
+      timelineSlider.max = currentState.total_steps;
+      timelineSlider.value = currentStep;
+      stepBadge.textContent = `Step ${currentStep} / ${currentState.total_steps}`;
+      
+      if (currentStep === 0) {
+        const u0Desc = (currentState.sense === "MINIMIZE") ? "u0 (Nadir M)" : "u0 (Nadir m)";
+        stepDesc.textContent = `Initial state: U(∅) = {${u0Desc}} defined by dummy reference points.`;
+      } else {
+        const lastPt = currentState.points[currentStep - 1];
+        stepDesc.textContent = `Point ${lastPt.id} (${lastPt.coordinates.join(', ')}) inserted.`;
+      }
+
+      renderPointsList();
+      renderBoundsTable();
+      renderPlotlyView();
+      renderNetworkGraph();
+    }
+
+    function renderPointsList() {
+      pointsTableBody.innerHTML = "";
+      document.getElementById("points-count").textContent = `${currentState.points.length} points`;
+      
+      currentState.points.forEach((pt, idx) => {
+        const isIncludedInCurrentStep = (idx < currentStep);
+        const tr = document.createElement("tr");
+        tr.className = isIncludedInCurrentStep ? "hover:bg-slate-800/60 transition" : "opacity-35 hover:bg-slate-800/60 transition";
+        
+        tr.innerHTML = `
+          <td class="py-1 px-2 font-bold ${isIncludedInCurrentStep ? 'text-red-400' : 'text-slate-500'}">${pt.id}</td>
+          <td class="py-1 px-2 text-slate-300">(${pt.coordinates.map(c => Number(c).toFixed(2)).join(", ")})</td>
+          <td class="py-1 px-1.5 text-right">
+            <button onclick="deletePoint(${idx})" class="text-slate-500 hover:text-red-400 transition" title="Delete Point">
+              <i data-lucide="trash-2" class="w-3 h-3"></i>
+            </button>
+          </td>
+        `;
+        pointsTableBody.appendChild(tr);
+      });
+      lucide.createIcons();
+    }
+
+    function renderBoundsTable() {
+      boundsTableHeaders.innerHTML = "";
+      boundsTableBody.innerHTML = "";
+      document.getElementById("bounds-count").textContent = `${currentState.bounds_count} Bounds`;
+
+      const dims = currentState.dimensions;
+
+      let headersHTML = `<th class="py-1.5 px-2 font-semibold">ID</th>`;
+      for (let j = 1; j <= dims; j++) {
+        headersHTML += `<th class="py-1.5 px-1.5 font-semibold">u_${j}</th>`;
+      }
+      for (let j = 1; j <= dims; j++) {
+        headersHTML += `<th class="py-1.5 px-1.5 font-semibold text-sky-400">z^${j}(u)</th>`;
+      }
+      for (let k = 1; k <= dims; k++) {
+        headersHTML += `<th class="py-1.5 px-1.5 font-semibold text-emerald-400">ν_${k}</th>`;
+      }
+      headersHTML += `<th class="py-1.5 px-2 font-semibold">Classification</th>`;
+      boundsTableHeaders.innerHTML = headersHTML;
+
+      currentState.table.forEach((row) => {
+        const isHighlighted = (highlightBoundId === row.ID);
+        const tr = document.createElement("tr");
+        tr.className = `cursor-pointer transition ${isHighlighted ? 'bg-sky-950/80 font-bold border-l-2 border-sky-400' : 'hover:bg-slate-800/50'}`;
+        tr.onclick = () => selectBound(row.ID);
+
+        let rowHTML = `<td class="py-1.5 px-2 font-bold text-slate-200">${row.ID}</td>`;
+        for (let j = 1; j <= dims; j++) {
+          rowHTML += `<td class="py-1.5 px-1.5 text-slate-300">${row[`u_${j}`]}</td>`;
+        }
+        for (let j = 1; j <= dims; j++) {
+          rowHTML += `<td class="py-1.5 px-1.5 text-sky-400">${row[`z^${j}(u)`]}</td>`;
+        }
+        for (let k = 1; k <= dims; k++) {
+          const val = row[`ν_${k}`];
+          const isExt = val.includes("Extreme");
+          rowHTML += `<td class="py-1.5 px-1.5 ${isExt ? 'text-slate-500 italic' : 'text-emerald-400'}">${val}</td>`;
+        }
+        rowHTML += `<td class="py-1.5 px-2 text-[10px] text-slate-400">${row.Status}</td>`;
+        tr.innerHTML = rowHTML;
+        boundsTableBody.appendChild(tr);
+      });
+    }
+
+    async function renderPlotlyView() {
+      let endpoint = (activeViewTab === "pairwise") ? "/api/figure_pairwise" : "/api/figure_3d";
+      const showOccupied = document.getElementById("toggle-occupied")?.checked ? "1" : "0";
+      const showBoxes = document.getElementById("toggle-boxes")?.checked ? "1" : "0";
+
+      let query = `?step=${currentStep}&show_occupied=${showOccupied}&show_boxes=${showBoxes}&dom_opacity=${currentDomOpacity}`;
+      if (highlightBoundId) query += `&highlight=${highlightBoundId}`;
+
+      const res = await fetch(`${endpoint}${query}`);
+      const figData = await res.json();
+
+      Plotly.react("plotly-container", figData.data, figData.layout, {
+        responsive: true,
+        displayModeBar: true,
+        displaylogo: false
+      });
+    }
+
+    async function renderNetworkGraph() {
+      const res = await fetch(`/api/graph?step=${currentStep}&mode=${activeGraphMode}`);
+      const graphData = await res.json();
+
+      const container = document.getElementById("vis-network-container");
+
+      const nodes = new vis.DataSet(graphData.nodes);
+      const edges = new vis.DataSet(graphData.edges);
+
+      const options = {
+        nodes: {
+          borderWidth: 2,
+          shadow: false,
+          font: { color: "#f8fafc", size: 12, face: "monospace" }
+        },
+        edges: {
+          font: { size: 11, strokeWidth: 0, face: "monospace" },
+          smooth: { type: "curvedCW", roundness: 0.25 }
+        },
+        physics: {
+          enabled: isPhysicsEnabled,
+          solver: "forceAtlas2Based",
+          forceAtlas2Based: {
+            gravitationalConstant: -100,
+            centralGravity: 0.008,
+            springLength: 220,
+            springConstant: 0.06,
+            damping: 0.45,
+            avoidOverlap: 1.0
+          }
+        },
+        interaction: { hover: true, tooltipDelay: 80 }
+      };
+
+      if (network) {
+        network.destroy();
+      }
+
+      network = new vis.Network(container, { nodes, edges }, options);
+
+      network.on("selectNode", function (params) {
+        if (params.nodes.length > 0) {
+          const selectedNodeId = params.nodes[0];
+          const nodeObj = nodes.get(selectedNodeId);
+          if (nodeObj && nodeObj.bound_id) {
+            selectBound(nodeObj.bound_id);
+          }
+        }
+      });
+    }
+
+    function selectBound(boundId) {
+      highlightBoundId = (highlightBoundId === boundId) ? null : boundId;
+      renderBoundsTable();
+      renderPlotlyView();
+    }
+
+    document.getElementById("btn-clear-hl").onclick = () => {
+      highlightBoundId = null;
+      renderBoundsTable();
+      renderPlotlyView();
+    };
+
+    timelineSlider.oninput = (e) => {
+      syncState(parseInt(e.target.value));
+    };
+
+    document.getElementById("btn-first-step").onclick = () => {
+      syncState(0);
+    };
+
+    document.getElementById("btn-prev-step").onclick = () => {
+      if (currentStep > 0) syncState(currentStep - 1);
+    };
+
+    document.getElementById("btn-next-step").onclick = () => {
+      if (currentStep < currentState.total_steps) syncState(currentStep + 1);
+    };
+
+    const playPauseBtn = document.getElementById("btn-play-pause");
+    playPauseBtn.onclick = () => {
+      if (isPlaying) {
+        clearInterval(playInterval);
+        isPlaying = false;
+        playPauseBtn.textContent = "Play";
+      } else {
+        isPlaying = true;
+        playPauseBtn.textContent = "Pause";
+        playInterval = setInterval(() => {
+          if (currentStep >= currentState.total_steps) {
+            syncState(0);
+          } else {
+            syncState(currentStep + 1);
+          }
+        }, 1600);
+      }
+    };
+
+    document.getElementById("add-point-form").onsubmit = async (e) => {
+      e.preventDefault();
+      hideError();
+      const pId = document.getElementById("pt-id").value.trim();
+      const rawCoords = document.getElementById("pt-coords").value.trim();
+      if (!rawCoords) {
+        showError("Please enter point coordinates.");
+        return;
+      }
+
+      const coords = rawCoords.split(",").map(s => parseFloat(s.trim()));
+      const res = await fetch("/api/add_point", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: pId, coordinates: coords })
+      });
+
+      if (res.ok) {
+        document.getElementById("pt-id").value = "";
+        document.getElementById("pt-coords").value = "";
+        hideError();
+        syncState();
+      } else {
+        const err = await res.json();
+        showError(err.error || "Failed to add point");
+      }
+    };
+
+    async function deletePoint(idx) {
+      hideError();
+      await fetch("/api/delete_point", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ index: idx })
+      });
+      syncState();
+    }
+
+    async function loadSelectedPreset() {
+      hideError();
+      const preset = document.getElementById("preset-select").value;
+      await fetch("/api/load_preset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ preset })
+      });
+      highlightBoundId = null;
+      syncState();
+    }
+
+    document.getElementById("btn-load-preset").onclick = loadSelectedPreset;
+    document.getElementById("preset-select").onchange = loadSelectedPreset;
+
+    // Dimension Toggles
+    btnDim2.onclick = () => applyConfig({ dimensions: 2 });
+    btnDim3.onclick = () => applyConfig({ dimensions: 3 });
+
+    // Sense Toggles
+    btnSenseMin.onclick = () => applyConfig({ sense: "MINIMIZE" });
+    btnSenseMax.onclick = () => applyConfig({ sense: "MAXIMIZE" });
+
+    // Apply Button
+    document.getElementById("btn-apply-config").onclick = () => {
+      const rawLb = cfgLb.value.split(",").map(x => parseFloat(x.trim()));
+      const rawUb = cfgUb.value.split(",").map(x => parseFloat(x.trim()));
+      applyConfig({ lower_bound: rawLb, upper_bound: rawUb });
+    };
+
+    async function applyConfig(overrides = {}) {
+      hideError();
+      const payload = {
+        dimensions: overrides.dimensions || currentState.dimensions,
+        sense: overrides.sense || currentState.sense,
+        lower_bound: overrides.lower_bound || cfgLb.value.split(",").map(x => parseFloat(x.trim())),
+        upper_bound: overrides.upper_bound || cfgUb.value.split(",").map(x => parseFloat(x.trim()))
+      };
+
+      // Adjust default bounds if dimension changed
+      if (overrides.dimensions && overrides.dimensions !== currentState.dimensions) {
+        payload.lower_bound = (overrides.dimensions === 2) ? [0.0, 0.0] : [0.0, 0.0, 0.0];
+        payload.upper_bound = (overrides.dimensions === 2) ? [10.0, 10.0] : [10.0, 10.0, 10.0];
+      }
+
+      const res = await fetch("/api/configure", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        highlightBoundId = null;
+        syncState();
+      } else {
+        const err = await res.json();
+        showError(err.error || "Failed to configure problem settings");
+      }
+    }
+
+    function updateViewTabUI() {
+      document.querySelectorAll(".view-tab").forEach(b => {
+        if (b.dataset.tab === activeViewTab) {
+          b.className = "view-tab flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-sky-600 text-white shadow-sm transition-all duration-150 cursor-pointer";
+        } else {
+          b.className = "view-tab flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-all duration-150 cursor-pointer";
+        }
+      });
+      const spatialControls = document.getElementById("spatial-controls");
+      if (spatialControls) {
+        spatialControls.style.display = (activeViewTab === "spatial") ? "flex" : "none";
+      }
+      syncOpacityWidgetState();
+    }
+
+    function syncOpacityWidgetState() {
+      const opacityWidget = document.getElementById("opacity-widget");
+      const opacitySlider = document.getElementById("opacity-slider");
+      const isOccupiedChecked = document.getElementById("toggle-occupied")?.checked;
+      const is3DSpatial = (activeViewTab === "spatial" && currentState && currentState.dimensions === 3);
+      if (opacityWidget) {
+        if (!is3DSpatial) {
+          opacityWidget.style.display = "none";
+        } else {
+          opacityWidget.style.display = "flex";
+          opacityWidget.style.opacity = isOccupiedChecked ? "1" : "0.35";
+          if (opacitySlider) opacitySlider.disabled = !isOccupiedChecked;
+        }
+      }
+    }
+
+    const opacitySlider = document.getElementById("opacity-slider");
+    const opacityValBadge = document.getElementById("opacity-val-badge");
+    if (opacitySlider) {
+      opacitySlider.oninput = (e) => {
+        const val = parseFloat(e.target.value) / 100.0;
+        currentDomOpacity = val;
+        if (opacityValBadge) opacityValBadge.textContent = `${Math.round(e.target.value)}%`;
+
+        const plotDiv = document.getElementById("plotly-container");
+        if (plotDiv && plotDiv.data) {
+          const domIndices = [];
+          plotDiv.data.forEach((trace, idx) => {
+            if (trace.legendgroup === "dominated_zones" && trace.type === "mesh3d") {
+              domIndices.push(idx);
+            }
+          });
+          if (domIndices.length > 0) {
+            Plotly.restyle(plotDiv, { opacity: val }, domIndices);
+          }
+        }
+      };
+    }
+
+    function updateGraphModeUI() {
+      document.querySelectorAll(".graph-mode-btn").forEach(b => {
+        if (b.dataset.mode === activeGraphMode) {
+          b.className = "px-2.5 py-0.5 rounded text-xs font-semibold bg-sky-600 text-white shadow-sm transition-all duration-150 cursor-pointer graph-mode-btn";
+        } else {
+          b.className = "px-2.5 py-0.5 rounded text-xs font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-all duration-150 cursor-pointer graph-mode-btn";
+        }
+      });
+    }
+
+    document.querySelectorAll(".view-tab").forEach(btn => {
+      btn.onclick = () => {
+        activeViewTab = btn.dataset.tab;
+        updateViewTabUI();
+        renderPlotlyView();
+      };
+    });
+
+    document.querySelectorAll(".graph-mode-btn").forEach(btn => {
+      btn.onclick = () => {
+        activeGraphMode = btn.dataset.mode;
+        updateGraphModeUI();
+        renderNetworkGraph();
+      };
+    });
+
+    document.getElementById("btn-fit-graph").onclick = () => {
+      if (network) network.fit();
+    };
+
+    document.getElementById("btn-toggle-physics").onclick = (e) => {
+      isPhysicsEnabled = !isPhysicsEnabled;
+      if (network) network.setOptions({ physics: { enabled: isPhysicsEnabled } });
+      e.target.textContent = isPhysicsEnabled ? "Freeze Layout" : "Enable Physics";
+    };
+
+    document.getElementById("toggle-occupied").onchange = () => {
+      syncOpacityWidgetState();
+      renderPlotlyView();
+    };
+    document.getElementById("toggle-boxes").onchange = () => renderPlotlyView();
+
+    syncState();
+  </script>
+</body>
+</html>
