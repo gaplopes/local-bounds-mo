@@ -106,12 +106,21 @@ public:
    *
    * @param point The new nondominated point.
    */
-  void update_re(const Point<T> &point) {
+  /**
+   * @brief Updates the bound set with a new nondominated point.
+   *
+   * Implements Algorithm 2 (Redundancy Elimination) from the paper.
+   *
+   * @param point The new nondominated point.
+   * @return true if the bound set was updated, false if the point did not
+   * dominate any local bound.
+   */
+  bool update_re(const Point<T> &point) {
     if (point.dimensions() != dimensions_) {
       throw std::invalid_argument(
           "Point dimensions must match bound set dimensions");
     }
-    update_redundancy_elimination(bounds_, point);
+    return update_redundancy_elimination(bounds_, point);
   }
 
   /**
@@ -120,13 +129,15 @@ public:
    * Implements Algorithm 3 (Enhanced Redundancy Elimination) from the paper.
    *
    * @param point The new nondominated point.
+   * @return true if the bound set was updated, false if the point did not
+   * dominate any local bound.
    */
-  void update_re_enhanced(const Point<T> &point) {
+  bool update_re_enhanced(const Point<T> &point) {
     if (point.dimensions() != dimensions_) {
       throw std::invalid_argument(
           "Point dimensions must match bound set dimensions");
     }
-    update_redundancy_elimination_enhanced(bounds_, point);
+    return update_redundancy_elimination_enhanced(bounds_, point);
   }
 
   /**
@@ -138,13 +149,15 @@ public:
    * additional information to directly generate only non-redundant bounds.
    *
    * @param point The new nondominated point.
+   * @return true if the bound set was updated, false if the point did not
+   * dominate any local bound.
    */
-  void update_ra_sa(const Point<T> &point) {
+  bool update_ra_sa(const Point<T> &point) {
     if (point.dimensions() != dimensions_) {
       throw std::invalid_argument(
           "Point dimensions must match bound set dimensions");
     }
-    update_redundancy_avoidance_sa(bounds_, point);
+    return update_redundancy_avoidance_sa(bounds_, point);
   }
 
   /**
@@ -156,13 +169,15 @@ public:
    * bound.
    *
    * @param point The new nondominated point.
+   * @return true if the bound set was updated, false if the point did not
+   * dominate any local bound.
    */
-  void update_ra(const Point<T> &point) {
+  bool update_ra(const Point<T> &point) {
     if (point.dimensions() != dimensions_) {
       throw std::invalid_argument(
           "Point dimensions must match bound set dimensions");
     }
-    update_redundancy_avoidance(bounds_, point);
+    return update_redundancy_avoidance(bounds_, point);
   }
 
   /**
@@ -181,16 +196,18 @@ public:
    * is used as fallback regardless of p.
    *
    * @param point The new nondominated point.
+   * @return true if the bound set was updated, false if the point did not
+   * dominate any local bound.
    */
-  void update_auto(const Point<T> &point) {
+  bool update_auto(const Point<T> &point) {
     if (point.dimensions() != dimensions_) {
       throw std::invalid_argument(
           "Point dimensions must match bound set dimensions");
     }
     if (dimensions_ >= 6 && has_anti_reference()) {
-      update_redundancy_avoidance(bounds_, point);
+      return update_redundancy_avoidance(bounds_, point);
     } else {
-      update_redundancy_elimination(bounds_, point);
+      return update_redundancy_elimination(bounds_, point);
     }
   }
 
@@ -202,13 +219,15 @@ public:
    * correctness verification of the more efficient algorithms.
    *
    * @param point The new nondominated point.
+   * @return true if the bound set was updated, false if the point did not
+   * dominate any local bound.
    */
-  void update_naive(const Point<T> &point) {
+  bool update_naive(const Point<T> &point) {
     if (point.dimensions() != dimensions_) {
       throw std::invalid_argument(
           "Point dimensions must match bound set dimensions");
     }
-    _update_naive(bounds_, point);
+    return _update_naive(bounds_, point);
   }
 
   /**
@@ -298,7 +317,7 @@ private:
    * @param current_bounds Current set of local bounds (modified in place).
    * @param point New point z̄.
    */
-  void update_redundancy_elimination(std::vector<LocalBound<T>> &current_bounds,
+  bool update_redundancy_elimination(std::vector<LocalBound<T>> &current_bounds,
                                      const Point<T> &point) {
     // Step 1: Find strongly dominated bounds (Set A) and weakly dominated
     // bounds (Set B) A contains bounds strictly dominated by the point (z < u)
@@ -329,7 +348,7 @@ private:
 
     // If no search zones contain the new point, the bound set is unaffected
     if (A_idx.empty())
-      return;
+      return false;
 
     std::sort(A_idx.begin(), A_idx.end());
 
@@ -389,6 +408,7 @@ private:
     current_bounds.insert(current_bounds.end(),
                           std::make_move_iterator(P.begin()),
                           std::make_move_iterator(P.end()));
+    return true;
   }
 
   /**
@@ -404,7 +424,7 @@ private:
    * @param current_bounds Current set of local bounds (modified in place).
    * @param point New point z̄.
    */
-  void update_redundancy_elimination_enhanced(
+  bool update_redundancy_elimination_enhanced(
       std::vector<LocalBound<T>> &current_bounds, const Point<T> &point) {
     // Step 1: Find A (strictly dominated bounds)
     std::vector<std::size_t> A_idx;
@@ -417,7 +437,7 @@ private:
     }
 
     if (A_idx.empty())
-      return;
+      return false;
 
     std::sort(A_idx.begin(), A_idx.end());
 
@@ -507,6 +527,7 @@ private:
                             std::make_move_iterator(pj.begin()),
                             std::make_move_iterator(pj.end()));
     }
+    return true;
   }
 
   /**
@@ -519,7 +540,7 @@ private:
    * @param def_sets Current defining sets (modified in place).
    * @param point New point z̄.
    */
-  void
+  bool
   update_redundancy_avoidance_sa(std::vector<LocalBound<T>> &current_bounds,
                                  const Point<T> &z_bar) {
     // Step 1: A ← {u ∈ U(N) : z̄ < u}
@@ -533,7 +554,7 @@ private:
     }
 
     if (A_idx.empty())
-      return;
+      return false;
 
     // Step 2: P ← ∅
     std::vector<LocalBound<T>> P;
@@ -603,6 +624,7 @@ private:
     current_bounds.insert(current_bounds.end(),
                           std::make_move_iterator(P.begin()),
                           std::make_move_iterator(P.end()));
+    return true;
   }
 
   /**
@@ -616,7 +638,7 @@ private:
    * @param def_sets Current defining sets (modified in place).
    * @param point New point z̄.
    */
-  void update_redundancy_avoidance(std::vector<LocalBound<T>> &current_bounds,
+  bool update_redundancy_avoidance(std::vector<LocalBound<T>> &current_bounds,
                                    const Point<T> &z_bar) {
     // Step 1: A ← {u ∈ U(N) : z̄ < u}
     std::vector<std::size_t> A_idx;
@@ -629,7 +651,7 @@ private:
     }
 
     if (A_idx.empty())
-      return;
+      return false;
 
     // Steps 3–4: Update Z^j(u) for ALL bounds u ∈ U(N)
     // Per Proposition 4.1: if z̄_j = u_j and z̄_{-j} < u_{-j}, add z̄ to Z^j(u)
@@ -744,6 +766,7 @@ private:
     current_bounds.insert(current_bounds.end(),
                           std::make_move_iterator(P.begin()),
                           std::make_move_iterator(P.end()));
+    return true;
   }
 
   /**
@@ -755,7 +778,7 @@ private:
    * @param current_bounds Current set of local bounds (modified in place).
    * @param point New point z̄.
    */
-  void _update_naive(std::vector<LocalBound<T>> &current_bounds,
+  bool _update_naive(std::vector<LocalBound<T>> &current_bounds,
                      const Point<T> &point) {
     // Step 1: Find strongly dominated bounds and their indices
     std::vector<LocalBound<T>> A;
@@ -769,7 +792,7 @@ private:
     }
 
     if (A.empty())
-      return;
+      return false;
 
     // Step 2: Generate all candidate bounds (projections)
     std::vector<LocalBound<T>> new_bounds;
@@ -841,6 +864,7 @@ private:
     // Step 5: Add new bounds
     current_bounds.insert(current_bounds.end(), new_bounds.begin(),
                           new_bounds.end());
+    return true;
   }
 };
 

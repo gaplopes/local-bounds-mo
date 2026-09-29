@@ -9,9 +9,15 @@ def test_basic():
     assert bs.size() == 1
     
     p = Point("p1", [1.0, 2.0, 3.0])
-    bs.update_auto(p)
+    updated = bs.update_auto(p)
+    assert updated is True
     
     print(f"Size after 1 point: {bs.size()}")
+    assert bs.size() == 3
+
+    # Dominated point should return False
+    p_dom = Point("p_dom", [4.0, 5.0, 6.0])
+    assert bs.update_auto(p_dom) is False
     assert bs.size() == 3
 
 def test_neighborhood():
@@ -24,9 +30,15 @@ def test_neighborhood():
     assert nbs.size() == 1
     
     p = Point("p1", [1.0, 2.0, 3.0])
-    nbs.update(p)
+    updated = nbs.update(p)
+    assert updated is True
     
     print(f"Size after 1 point: {nbs.nonredundant_size()}")
+    assert nbs.nonredundant_size() == 3
+
+    # Dominated point should return False
+    p_dom = Point("p_dom", [4.0, 5.0, 6.0])
+    assert nbs.update(p_dom) is False
     assert nbs.nonredundant_size() == 3
     print("Success!")
 

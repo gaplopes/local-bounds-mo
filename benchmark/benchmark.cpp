@@ -181,8 +181,8 @@ void print_bound_set_delta(
 
 template <
     Objective Sense,
-    void (BoundSet<int64_t, Sense>::*UpdateA)(const Point<int64_t>&),
-    void (BoundSet<int64_t, Sense>::*UpdateB)(const Point<int64_t>&)>
+    bool (BoundSet<int64_t, Sense>::*UpdateA)(const Point<int64_t>&),
+    bool (BoundSet<int64_t, Sense>::*UpdateB)(const Point<int64_t>&)>
 bool compare_iteration_by_iteration(
     std::ostream& out,
     const std::string& a_name,
@@ -264,7 +264,7 @@ bool compare_all_algorithms_bounds_set(
 
 template <Objective Sense,
           typename BoundSetType,
-          void (BoundSetType::*UpdateMethod)(const Point<int64_t>&)>
+          bool (BoundSetType::*UpdateMethod)(const Point<int64_t>&)>
 BenchmarkResult run_benchmark(
     const std::string& name,
     const std::string& sense_str,

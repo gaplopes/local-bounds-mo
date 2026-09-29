@@ -375,28 +375,51 @@ void test_auto_algorithm() {
 
 /**
  * Test adding a dominated point (outside all search zones).
- * The bound set should remain unchanged.
+ * The bound set should remain unchanged and update_* should return false.
  */
 void test_dominated_point() {
-    std::cout << "\n=== Testing Dominated Point (No-Op) ===" << std::endl;
+    std::cout << "\n=== Testing Dominated Point (No-Op & Return False) ===" << std::endl;
 
     const int64_t M = 10;
+    const int64_t m = 0;
     BoundSet<int64_t, Objective::MINIMIZE> bound_set({M, M});
 
     Point<int64_t> z1("z1", {3, 7});
-    bound_set.update_re(z1);
+    bool r1 = bound_set.update_re(z1);
+    TEST("Valid point update_re returns true", r1);
     TEST("Before: 2 bounds", bound_set.size() == 2);
 
     // (4, 8) is dominated by z1 = (3,7) — outside all search zones
     Point<int64_t> z_dom("z_dom", {4, 8});
-    bound_set.update_re(z_dom);
+    bool r_dom = bound_set.update_re(z_dom);
+    TEST("Dominated point update_re returns false", !r_dom);
     TEST("After dominated point: still 2 bounds", bound_set.size() == 2);
 
     // Also test with naive
     BoundSet<int64_t, Objective::MINIMIZE> bs_naive({M, M});
-    bs_naive.update_naive(Point<int64_t>("z1", {3, 7}));
-    bs_naive.update_naive(Point<int64_t>("z_dom", {4, 8}));
+    TEST("Naive: valid point returns true", bs_naive.update_naive(Point<int64_t>("z1", {3, 7})));
+    TEST("Naive: dominated point returns false", !bs_naive.update_naive(Point<int64_t>("z_dom", {4, 8})));
     TEST("Naive: After dominated point, still 2 bounds", bs_naive.size() == 2);
+
+    // Also test with enhanced (Alg 3)
+    BoundSet<int64_t, Objective::MINIMIZE> bs_enhanced({M, M});
+    TEST("Enhanced: valid point returns true", bs_enhanced.update_re_enhanced(Point<int64_t>("z1", {3, 7})));
+    TEST("Enhanced: dominated point returns false", !bs_enhanced.update_re_enhanced(Point<int64_t>("z_dom", {4, 8})));
+
+    // Also test with RA-SA (Alg 4)
+    BoundSet<int64_t, Objective::MINIMIZE> bs_ra_sa({M, M}, {m, m});
+    TEST("RA-SA: valid point returns true", bs_ra_sa.update_ra_sa(Point<int64_t>("z1", {3, 7})));
+    TEST("RA-SA: dominated point returns false", !bs_ra_sa.update_ra_sa(Point<int64_t>("z_dom", {4, 8})));
+
+    // Also test with RA (Alg 5)
+    BoundSet<int64_t, Objective::MINIMIZE> bs_ra({M, M}, {m, m});
+    TEST("RA: valid point returns true", bs_ra.update_ra(Point<int64_t>("z1", {3, 7})));
+    TEST("RA: dominated point returns false", !bs_ra.update_ra(Point<int64_t>("z_dom", {4, 8})));
+
+    // Also test with auto
+    BoundSet<int64_t, Objective::MINIMIZE> bs_auto({M, M});
+    TEST("Auto: valid point returns true", bs_auto.update_auto(Point<int64_t>("z1", {3, 7})));
+    TEST("Auto: dominated point returns false", !bs_auto.update_auto(Point<int64_t>("z_dom", {4, 8})));
 }
 
 /**

@@ -68,16 +68,20 @@ public:
    * @brief Updates using Algorithm 2 (Redundancy Elimination).
    *
    * @param point The new nondominated point.
+   * @return true if the bound set was updated, false if the point did not
+   * dominate any local bound.
    */
-  void update_re(const Point<T> &point) { update_re_impl(point, false); }
+  bool update_re(const Point<T> &point) { return update_re_impl(point, false); }
 
   /**
    * @brief Updates using Algorithm 3 (Enhanced Redundancy Elimination).
    *
    * @param point The new nondominated point.
+   * @return true if the bound set was updated, false if the point did not
+   * dominate any local bound.
    */
-  void update_re_enhanced(const Point<T> &point) {
-    update_re_impl(point, true);
+  bool update_re_enhanced(const Point<T> &point) {
+    return update_re_impl(point, true);
   }
 
   /**
@@ -87,8 +91,10 @@ public:
    * performs filtering during generation.
    *
    * @param point The new nondominated point.
+   * @return true if the bound set was updated, false if the point did not
+   * dominate any local bound.
    */
-  void update_naive(const Point<T> &point) { update_re(point); }
+  bool update_naive(const Point<T> &point) { return update_re(point); }
 
   /**
    * @brief Automatically selects the best update algorithm.
@@ -96,8 +102,10 @@ public:
    * Always dispatches to update_re_enhanced for the tree-based implementation.
    *
    * @param point The new nondominated point.
+   * @return true if the bound set was updated, false if the point did not
+   * dominate any local bound.
    */
-  void update_auto(const Point<T> &point) { update_re_enhanced(point); }
+  bool update_auto(const Point<T> &point) { return update_re_enhanced(point); }
 
   /**
    * @brief Returns the current set of local bounds.
@@ -169,12 +177,12 @@ private:
    * Both algorithms share the same tree-based implementation since the
    * LBTree handles the spatial indexing uniformly.
    */
-  void update_re_impl(const Point<T> &point, bool /* enhanced */) {
+  bool update_re_impl(const Point<T> &point, bool /* enhanced */) {
     const auto &z = point.coordinates;
     std::vector<std::vector<T>> A = tree_.ExtractStrictlyDominated(z);
 
     if (A.empty())
-      return;
+      return false;
 
     // Extract B_j
     std::vector<std::vector<std::vector<T>>> B(dimensions_);
@@ -258,6 +266,7 @@ private:
     for (const auto &p_cand : P) {
       tree_.Insert(p_cand);
     }
+    return true;
   }
 };
 

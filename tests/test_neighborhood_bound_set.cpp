@@ -204,12 +204,37 @@ void test_random_cross_validation() {
   std::cout << "Random cross-validation passed.\n\n";
 }
 
+void test_update_return_value() {
+  std::cout << "--- Test update() return value ---\n";
+
+  const std::vector<int64_t> M = {10, 10, 10};
+  const std::vector<int64_t> m = {0, 0, 0};
+
+  NeighborhoodBoundSet<int64_t> nbs(M, m);
+
+  // Valid point in search region -> returns true
+  bool r1 = nbs.update(IntPoint("z1", {4, 0, 4}));
+  assert(r1);
+  (void)r1;
+
+  // Dominated point (5, 5, 5) is outside search region -> returns false, bounds unchanged
+  size_t size_before = nbs.size();
+  bool r_dom = nbs.update(IntPoint("z_dom", {5, 5, 5}));
+  assert(!r_dom);
+  assert(nbs.size() == size_before);
+  (void)size_before;
+  (void)r_dom;
+
+  std::cout << "update() return value tests passed.\n\n";
+}
+
 int main() {
   test_example_2_8_from_paper();
   test_example_4_2_from_paper();
   test_example_4_13_ngp_from_paper();
   test_zbar_dominates_several_bounds();
   test_random_cross_validation();
+  test_update_return_value();
 
   std::cout << "All NeighborhoodBoundSet tests passed successfully!\n";
   return 0;

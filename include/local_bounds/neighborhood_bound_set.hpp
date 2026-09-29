@@ -68,8 +68,10 @@ class NeighborhoodBoundSet {
    * Implements Algorithm 1 from the paper.
    *
    * @param z_bar The new nondominated point.
+   * @return true if the bound set was updated, false if the point did not
+   * dominate any local bound.
    */
-  void update(const Point<T>& z_bar) {
+  bool update(const Point<T>& z_bar) {
     if (z_bar.dimensions() != dimensions_) {
       throw std::invalid_argument("Point dimensions must match bound set dimensions");
     }
@@ -84,7 +86,7 @@ class NeighborhoodBoundSet {
     }
     
     // If no search zone contains the new point, the bound set is unaffected
-    if (u_bar_idx == npos) return;
+    if (u_bar_idx == npos) return false;
 
     std::size_t original_size = nodes_.size();
     std::vector<std::size_t> O;
@@ -213,6 +215,7 @@ class NeighborhoodBoundSet {
     for (std::size_t idx : visited_indices) {
       free_node(idx);
     }
+    return true;
   }
 
   /**
