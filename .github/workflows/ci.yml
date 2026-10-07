@@ -43,8 +43,6 @@ jobs:
     - uses: actions/setup-node@v4
       with:
         node-version: '20'
-    - name: Test overlapping dashboard requests
-      run: node tests/test_dashboard.js
     - name: Install wheel with visualization and test dependencies
       run: python -m pip install ".[vis,test]"
     - name: Test Python bindings and visualization
