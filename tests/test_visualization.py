@@ -513,7 +513,7 @@ class TestVisualization(unittest.TestCase):
         data = vis.extract_bounds_data(nbs, [10,10], [0,0], [point])
         highlighted = data["bounds"][0].id
         fig = vis.plot_2d_bounds(data, highlight_bound_id=highlighted)
-        bounds = next(trace for trace in fig.data if trace.mode == "markers+text" and trace.legendgroup == "local_bounds")
+        bounds = next(trace for trace in fig.data if trace.mode == "markers" and trace.legendgroup == "local_bounds")
         self.assertEqual(bounds.marker.color[0], "#f97316")
         self.assertEqual(bounds.customdata[0], highlighted)
         self.assertNotIn(payload, fig.to_json())
@@ -583,6 +583,99 @@ class TestVisualization(unittest.TestCase):
                 self.assertEqual(client.post("/api/probe", json={"coordinates": coords}).status_code, 400)
             self.assertEqual(client.get("/api/state").get_json(), before)
 
+    def test_history_matches_full_tracker_without_graph_exports(self):
+        from visualization.presets import PRESETS
+        for preset in PRESETS:
+            state = web_app.AppState()
+            state.load_preset(preset)
+            tracker = vis.LocalBoundsTracker(state.reference_point, state.anti_reference,
+                                            sense=state.sense)
+            for point in state.points:
+                tracker.add_point(point)
+            expected = [{"step": step.step,
+                         "point_added": step.point_added.id if step.point_added else "Initial State",
+                         "destroyed_bounds": step.destroyed_bounds,
+                         "new_bounds": step.new_bounds,
+                         "total_bounds": len(step.bounds_data["bounds"])}
+                        for step in tracker.steps]
+            with patch.object(vis, "extract_bounds_data", side_effect=AssertionError("unused graph export")):
+                self.assertEqual(state.compute_step_history(), expected)
+            state.compute_step_history()[0]["new_bounds"].clear()
+            self.assertEqual(state.compute_step_history(), expected)
+
+    def test_step_cache_isolation_keys_and_mutation_invalidation(self):
+        state = web_app.AppState()
+        state.load_preset("paper1_ngp")
+        with patch.object(vis, "extract_bounds_data", wraps=vis.extract_bounds_data) as extract:
+            first = state.get_bounds_at_step(3)
+            expected_table = vis.create_bounds_table(first)
+            first["bounds"][0].coordinates[0] = -99
+            first["points"][0]["coordinates"][0] = -99
+            again = state.get_bounds_at_step(3)
+            self.assertEqual(vis.create_bounds_table(again), expected_table)
+            self.assertNotEqual(again["points"][0]["coordinates"][0], -99)
+            self.assertEqual(extract.call_count, 1)
+            state.get_bounds_at_step(3, include_quasi=True)
+            state.get_bounds_at_step(0)
+            self.assertEqual(extract.call_count, 3)
+            # Mutable native point fields must be part of the cache key.
+            state.points[0].id = "renamed"
+            self.assertEqual(state.get_bounds_at_step(3)["points"][0]["id"], "renamed")
+            self.assertEqual(extract.call_count, 4)
+            state.load_preset("paper1_ngp")
+            state.get_bounds_at_step(3)
+            self.assertEqual(extract.call_count, 5)
+            state.reset()
+            self.assertEqual(state.get_bounds_at_step(0)["counts"]["total"], 1)
+            self.assertEqual(extract.call_count, 6)
+
+    def test_step_cache_keeps_native_graph_argument_errors(self):
+        state = web_app.AppState()
+        state.get_bounds_at_step(0, False)
+        state.get_bounds_at_step(0, True)
+        for invalid in (0, 1, 0.0, 1.0, [], {}, None, "raw"):
+            with self.subTest(include_quasi=invalid):
+                with self.assertRaisesRegex(TypeError, "get_adjacency_graph"):
+                    state.get_bounds_at_step(0, invalid)
+
+    def test_step_cache_preserves_slice_errors_and_signed_zero(self):
+        state = web_app.AppState()
+        state.load_preset("2d")
+        state.get_bounds_at_step(0)
+        with self.assertRaisesRegex(TypeError, "slice indices must be integers"):
+            state.get_bounds_at_step(0.0)
+        state.lower_bound[0] = -0.0
+        self.assertEqual(str(state.get_bounds_at_step(0)["lower_bound"][0]), "-0.0")
+        state.lower_bound[0] = 0.0
+        self.assertEqual(str(state.get_bounds_at_step(0)["lower_bound"][0]), "0.0")
+        state.points[0].coordinates = [3.5, 7]
+        self.assertEqual(state.get_bounds_at_step(1)["points"][0]["coordinates"], [3.5, 7])
+
+    def test_figure_cache_preserves_options_and_validation(self):
+        client = web_app.app.test_client()
+        client.post("/api/load_preset", json={"preset": "paper2"})
+        with patch.object(vis, "plot_3d_bounds", wraps=vis.plot_3d_bounds) as spatial:
+            original = client.get("/api/figure_3d?step=2").data
+            self.assertEqual(client.get("/api/figure_3d?step=2").data, original)
+            self.assertEqual(spatial.call_count, 1)
+            changed = client.get("/api/figure_3d?step=2&show_boxes=1&dom_opacity=0.5").data
+            self.assertNotEqual(changed, original)
+            self.assertEqual(spatial.call_count, 2)
+            self.assertEqual(client.get("/api/figure_3d?step=2&show_boxes=1&dom_opacity=0.5").data, changed)
+            self.assertEqual(spatial.call_count, 2)
+            for suffix in ("step=oops", "dom_opacity=nan", "dom_opacity=inf"):
+                self.assertEqual(client.get("/api/figure_3d?" + suffix).status_code, 400)
+            client.post("/api/delete_point", json={"index": 2})
+            self.assertEqual(client.get("/api/figure_3d?step=2").data, original)
+            self.assertEqual(spatial.call_count, 3)
+        with patch.object(vis, "plot_pairwise_projections_2d", wraps=vis.plot_pairwise_projections_2d) as pairwise:
+            original = client.get("/api/figure_pairwise").data
+            self.assertEqual(client.get("/api/figure_pairwise").data, original)
+            self.assertEqual(pairwise.call_count, 1)
+            client.post("/api/configure", json={"dimensions": 2, "sense": "MAXIMIZE"})
+            self.assertNotEqual(client.get("/api/figure_pairwise").data, original)
+            self.assertEqual(pairwise.call_count, 2)
+
     def test_shared_presets_and_custom_cli_dimensions(self):
         from visualization import cli
         from visualization.presets import PRESETS
@@ -613,7 +706,179 @@ class TestVisualization(unittest.TestCase):
             cli.main()
         self.assertEqual(error.exception.code, 2)
 
+    def test_readability_labels_and_wireframe_preserve_geometry(self):
+        state = web_app.AppState()
+        data = state.get_bounds_at_step(2)
+        selected = data["bounds"][0].id
+        solid = vis.plot_3d_bounds(data, show_search_boxes=True, highlight_bound_id=selected)
+        meshes = [t for t in solid.data if t.type == "mesh3d" and t.legendgroup == "dominated_zones"]
+        self.assertEqual(len(meshes), len(data["points"]))
+        self.assertTrue(all(t.opacity == 0.30 for t in meshes))
+        reference_labels = [label for label in solid.layout.scene.annotations if label.name == "reference_points"]
+        self.assertEqual([label.text for label in reference_labels], ["m", "M"])
+        self.assertEqual([label.x for label in reference_labels], [data["lower_bound"][0], data["upper_bound"][0]])
+        wire = vis.plot_3d_bounds(data, show_search_boxes=True, highlight_bound_id=selected, wireframe=True)
+        self.assertFalse(any(t.type == "mesh3d" for t in wire.data))
+        solid_edges = [(t.legendgroup, tuple(t.x), tuple(t.y), tuple(t.z))
+                       for t in solid.data if t.type == "scatter3d" and t.mode == "lines"]
+        wire_edges = [(t.legendgroup, tuple(t.x), tuple(t.y), tuple(t.z))
+                      for t in wire.data if t.type == "scatter3d" and t.mode == "lines"]
+        self.assertEqual(wire_edges, solid_edges)
+        self.assertEqual({t.legendgroup for t in solid.data if t.showlegend},
+                         {t.legendgroup for t in wire.data if t.showlegend})
+        for plot, plot_data in ((vis.plot_3d_bounds, data), (vis.plot_pairwise_projections_2d, data),
+                                (vis.plot_2d_bounds, dict(data, dimensions=2))):
+            for mode in ("all", "none"):
+                figure = plot(plot_data, highlight_bound_id=selected, label_mode=mode)
+                annotations = figure.layout.scene.annotations if plot == vis.plot_3d_bounds else figure.layout.annotations
+                labels = [label for label in annotations if label.name]
+                self.assertEqual(bool(labels), mode == "all")
+                for label in labels:
+                    self.assertEqual(label.bgcolor, "#ffffff")
+                    self.assertEqual(label.font.color, "#0f172a")
+                    self.assertFalse(label.captureevents)
+                    self.assertEqual(label.font.size, 12)
+                markers = [trace for trace in figure.data if getattr(trace, "mode", None) == "markers"]
+                self.assertTrue(markers)
+                for trace in markers:
+                    self.assertTrue(all(trace.hovertext))
+                    self.assertTrue(all(bool(text) == (mode == "all") for text in trace.text))
+
+    def test_pairwise_coincident_markers_keep_all_members_and_boxes(self):
+        records = [vis.BoundRecord(i, name, coords, [], [None] * 3)
+                   for i, (name, coords) in enumerate((("u0", [4,4,2]), ("u1", [4,4,7]), ("u2", [8,3,1])))]
+        data = dict(dimensions=3, sense="MINIMIZE", lower_bound=[0]*3, upper_bound=[10]*3,
+                    reference_point=[10]*3, anti_reference=[0]*3, bounds=records,
+                    points=[{"id": "z0", "coordinates": [2,2,5]}, {"id": "z1", "coordinates": [2,2,7]}])
+        fig = vis.plot_pairwise_projections_2d(data, highlight_bound_id="u1", label_mode="all")
+        bounds = next(t for t in fig.data if t.legendgroup == "local_bounds" and t.mode == "markers")
+        self.assertEqual(list(bounds.customdata), [["u0", "u1"], "u2"])
+        self.assertEqual(list(bounds.x), [4,8])
+        self.assertEqual(bounds.text[0], "u0, u1")
+        self.assertEqual(bounds.textfont.color, "#ffffff")
+        self.assertTrue(any(a.text == "u0, u1" and a.xref == "x" for a in fig.layout.annotations))
+        self.assertEqual(bounds.marker.color[0], "#f97316")
+        self.assertIn("u0, u1", bounds.hovertext[0])
+        points = next(t for t in fig.data if t.legendgroup == "points")
+        self.assertEqual(list(points.customdata), [["z0", "z1"]])
+        self.assertEqual(points.text[0], "z0, z1")
+        self.assertIn("z0, z1", points.hovertext[0])
+        self.assertEqual(len([t for t in fig.data if t.mode == "lines"]), len(records) * 3)
+        self.assertEqual([b.coordinates for b in data["bounds"]], [[4,4,2], [4,4,7], [8,3,1]])
+        all_labels = vis.plot_pairwise_projections_2d(data, label_mode="all")
+        all_bounds = next(t for t in all_labels.data if t.legendgroup == "local_bounds" and t.mode == "markers")
+        self.assertEqual(all_bounds.text[0], "u0, u1")
+
+    def test_plot_ranges_and_view_revision_follow_problem_only(self):
+        state = web_app.AppState()
+        initial, later = state.get_bounds_at_step(0), state.get_bounds_at_step(2)
+        for plot in (vis.plot_3d_bounds, vis.plot_2d_bounds, vis.plot_pairwise_projections_2d):
+            a = plot(initial)
+            b = plot(later, highlight_bound_id=later["bounds"][0].id, label_mode="all")
+            self.assertEqual(a.layout.uirevision, b.layout.uirevision)
+            self.assertNotEqual(a.layout.uirevision, plot(dict(initial, sense="MAXIMIZE")).layout.uirevision)
+            self.assertNotEqual(a.layout.uirevision, plot(dict(initial, lower_bound=[-1]*3)).layout.uirevision)
+        data = dict(initial, lower_bound=[-2,-4,1], upper_bound=[8,16,21])
+        fig = vis.plot_pairwise_projections_2d(data)
+        for suffix, (di, dj) in zip(("", "2", "3"), ((0,1), (0,2), (1,2))):
+            self.assertEqual(list(fig.layout["xaxis" + suffix].range), [data["lower_bound"][di]-0.5, data["upper_bound"][di]+0.5])
+            self.assertEqual(list(fig.layout["yaxis" + suffix].range), [data["lower_bound"][dj]-0.5, data["upper_bound"][dj]+0.5])
+        two = vis.plot_2d_bounds(data)
+        self.assertEqual(tuple(two.layout.xaxis.range), (-2.5,8.5))
+        self.assertEqual(tuple(two.layout.yaxis.range), (-4.5,16.5))
+
+    def test_readability_api_options_validation_and_cache_keys(self):
+        client = web_app.app.test_client()
+        client.post("/api/load_preset", json={"preset": "paper2"})
+        selected = client.get("/api/state").get_json()["table"][0]["ID"]
+        for route, plot_name in (("figure_3d", "plot_3d_bounds"), ("figure_pairwise", "plot_pairwise_projections_2d")):
+            with patch.object(vis, plot_name, wraps=getattr(vis, plot_name)) as plot:
+                original = client.get(f"/api/{route}?highlight={selected}").get_json()
+                self.assertEqual(client.get(f"/api/{route}?highlight={selected}").get_json(), original)
+                self.assertEqual(plot.call_count, 1)
+                for mode in ("none",):
+                    changed = client.get(f"/api/{route}?labels={mode}&highlight={selected}").get_json()
+                    self.assertNotEqual(changed, original)
+                    self.assertEqual(client.get(f"/api/{route}?labels={mode}&highlight={selected}").get_json(), changed)
+                self.assertEqual(plot.call_count, 2)
+                for invalid in ("focus", "bad", "", "ALL"):
+                    response = client.get(f"/api/{route}?labels={invalid}")
+                    self.assertEqual(response.status_code, 400)
+                    self.assertEqual(response.get_json()["code"], "INVALID_LABELS")
+                self.assertEqual(plot.call_count, 2)
+        for route in ("figure_3d", "figure_pairwise"):
+            default = client.get(f"/api/{route}").get_json()
+            self.assertEqual(default, client.get(f"/api/{route}?labels=all").get_json())
+            self.assertTrue(all(all(t["text"]) and t["textfont"]["size"] == 12
+                                for t in default["data"] if t.get("mode") == "markers"))
+        solid = client.get("/api/figure_3d").get_json()
+        self.assertTrue(all(t["opacity"] == 0.30 for t in solid["data"] if t["type"] == "mesh3d" and t["legendgroup"] == "dominated_zones"))
+        with patch.object(vis, "plot_3d_bounds", wraps=vis.plot_3d_bounds) as plot:
+            wire = client.get("/api/figure_3d?wireframe=1").get_json()
+            self.assertFalse(any(t["type"] == "mesh3d" for t in wire["data"]))
+            self.assertEqual(client.get("/api/figure_3d?wireframe=1").get_json(), wire)
+            self.assertEqual(plot.call_count, 1)
+            self.assertEqual(client.get("/api/figure_3d").get_json(), solid)
+        client.post("/api/load_preset", json={"preset": "2d"})
+        figure = client.get("/api/figure_3d?labels=all").get_json()
+        self.assertTrue(all(t["textfont"]["color"] == "#ffffff" and all(t["text"])
+                            for t in figure["data"] if t.get("mode") == "markers"))
+
+    def test_final_cli_extracts_only_final_state(self):
+        from visualization import cli
+        for args, count in (([], 7), (["--preset", "max_3d"], 7), (["--points", "[]"], 1)):
+            results = []
+            for step_by_step in (False, True):
+                argv = ["cli", *args, *(["--step-by-step"] if step_by_step else [])]
+                stdout = io.StringIO()
+                with patch("sys.argv", argv), patch.object(cli, "generate_html_report") as report, \
+                        patch.object(vis, "extract_bounds_data", wraps=vis.extract_bounds_data) as extract, \
+                        contextlib.redirect_stdout(stdout):
+                    cli.main()
+                data = report.call_args.args[0]
+                assert len(data["bounds"]) == count
+                assert extract.call_count == (len(data["points"]) + 1 if step_by_step else 1)
+                assert ("--- Step" in stdout.getvalue()) == (step_by_step and bool(data["points"]))
+                results.append(dict(data, bounds=[bound.to_dict() for bound in data["bounds"]]))
+            assert results[0] == results[1]
+
+    def test_final_cli_preserves_validation_and_point_construction_order(self):
+        from visualization import cli
+        for args, message in ((["--points", "[[10,5],[\"bad\",2]]"], "incompatible function arguments"),
+                              (["--points", "[[3,7],[3,7]]"], "Duplicate coordinates"),
+                              (["--points", "[[3,7]]", "--anti", "10,10"], "Anti-reference must be strictly better")):
+            errors = []
+            for step_by_step in (False, True):
+                stderr = io.StringIO()
+                with patch("sys.argv", ["cli", *args, *(["--step-by-step"] if step_by_step else [])]), \
+                        contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                    cli.main()
+                assert error.exception.code == 2
+                errors.append(stderr.getvalue())
+            assert errors[0] == errors[1]
+            assert message in errors[0]
+
+    def test_tracker_snapshots_survive_new_points_and_replay_mutations(self):
+        def snapshot(step):
+            return json.dumps(step.bounds_data, default=vis.BoundRecord.to_dict, sort_keys=True)
+
+        tracker = vis.LocalBoundsTracker([10, 10], [0, 0])
+        point = lb.Point("z1", [3, 7])
+        first = tracker.add_point(point)
+        first_snapshot = snapshot(first)
+        point.id = "renamed"
+        point.coordinates = [2, 8]
+        second = tracker.add_point(lb.Point("z2", [7, 2]))
+        assert tracker.get_step(1) is first
+        assert snapshot(first) == first_snapshot
+        assert second.bounds_data["points"][0] == {"id": "renamed", "coordinates": [2, 8]}
+        assert [2, 10] in [bound.coordinates for bound in second.bounds_data["bounds"]]
+        before = snapshot(second)
+        with self.assertRaises(vis.PointValidationError):
+            tracker.add_point(lb.Point("bad", [10, 5]))
+        assert len(tracker.steps) == 3
+        assert snapshot(tracker.get_step(2)) == before
+
 
 if __name__ == "__main__":
     unittest.main()
-

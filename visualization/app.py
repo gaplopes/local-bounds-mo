@@ -8,6 +8,8 @@ import os
 import argparse
 import math
 from threading import RLock
+from copy import deepcopy
+from functools import lru_cache
 from typing import List, Dict, Any
 
 from flask import Flask, jsonify, request, Response, render_template, g
@@ -40,6 +42,10 @@ class AppState:
         self.upper_bound = [10.0, 10.0, 10.0]
         self.points: List[lb.Point] = []
         self.current_step = 0
+        # Cache private computations only; public snapshots remain independently mutable.
+        self._cached_bounds = lru_cache(maxsize=8)(self._compute_bounds_at_step)
+        self._cached_history = lru_cache(maxsize=1)(self._compute_step_history)
+        self._cached_figure = lru_cache(maxsize=8)(self._compute_figure_json)
         self.load_preset("paper2")
 
     @property
@@ -54,10 +60,22 @@ class AppState:
         # For MAXIMIZE: anti-reference is Ideal M (upper bound)
         return list(self.lower_bound if self.sense == lb.Objective.MINIMIZE else self.upper_bound)
 
+    def _cache_key(self):
+        # repr distinguishes signed zero and integer/float configuration values.
+        return (self.dimensions, self.sense,
+                tuple(map(repr, self.lower_bound)), tuple(map(repr, self.upper_bound)),
+                tuple((p.id, tuple(map(repr, p.coordinates))) for p in self.points))
+
+    def _clear_caches(self):
+        self._cached_bounds.cache_clear()
+        self._cached_history.cache_clear()
+        self._cached_figure.cache_clear()
+
     def reset(self):
         self.preset_name = None
         self.points = []
         self.current_step = 0
+        self._clear_caches()
 
     def load_preset(self, preset_name: str):
         if not isinstance(preset_name, str) or preset_name not in PRESETS:
@@ -70,27 +88,31 @@ class AppState:
         self.upper_bound = [10.0] * self.dimensions
         self.points = [lb.Point(f"z{i+1}", coords) for i, coords in enumerate(coordinates)]
         self.current_step = len(self.points)
+        self._clear_caches()
 
     def compute_step_history(self) -> List[Dict[str, Any]]:
-        tracker = vis.LocalBoundsTracker(
-            self.reference_point,
-            self.anti_reference,
-            sense=self.sense,
-            lower_bound=self.lower_bound,
-            upper_bound=self.upper_bound
-        )
-        for p in self.points:
-            tracker.add_point(p)
+        return deepcopy(self._cached_history(self._cache_key()))
 
-        history = []
-        for step in tracker.steps:
-            history.append({
-                "step": step.step,
-                "point_added": step.point_added.id if step.point_added else "Initial State",
-                "destroyed_bounds": step.destroyed_bounds,
-                "new_bounds": step.new_bounds,
-                "total_bounds": len(step.bounds_data["bounds"])
-            })
+    def _compute_step_history(self, key):
+        nbs = lb.NeighborhoodBoundSet(self.reference_point, self.anti_reference, sense=self.sense)
+        dims = nbs.dimensions()
+        if dims not in (2, 3):
+            raise ValueError(f"This visualizer supports 2D and 3D spaces (received {dims}D).")
+        previous = [b.id for b in nbs.nonredundant_bounds()]
+        history = [{"step": 0, "point_added": "Initial State", "destroyed_bounds": [],
+                    "new_bounds": previous, "total_bounds": len(previous)}]
+        accepted = []
+        for step, point in enumerate(self.points, 1):
+            vis.validate_point(list(point.coordinates), point.id, accepted,
+                               self.lower_bound, self.upper_bound, self.sense)
+            nbs.update(point)
+            current = [b.id for b in nbs.nonredundant_bounds()]
+            history.append({"step": step, "point_added": point.id,
+                            "destroyed_bounds": sorted(set(previous) - set(current)),
+                            "new_bounds": sorted(set(current) - set(previous)),
+                            "total_bounds": len(current)})
+            previous = current
+            accepted.append(point)
         return history
 
     def get_bound_set_at_step(self, step_idx: int):
@@ -103,6 +125,13 @@ class AppState:
         return nbs
 
     def get_bounds_at_step(self, step_idx: int, include_quasi=False) -> Dict[str, Any]:
+        step_idx = slice(None, step_idx).indices(len(self.points))[1]
+        if not isinstance(include_quasi, bool):
+            # Preserve native argument errors, including on a warm cache hit.
+            return self._compute_bounds_at_step(None, step_idx, include_quasi)
+        return deepcopy(self._cached_bounds(self._cache_key(), step_idx, include_quasi))
+
+    def _compute_bounds_at_step(self, key, step_idx, include_quasi):
         nbs = self.get_bound_set_at_step(step_idx)
         return vis.extract_bounds_data(
             nbs,
@@ -114,6 +143,25 @@ class AppState:
             sense=self.sense,
             include_quasi=include_quasi
         )
+
+    def figure_json(self, step_idx, kind, highlight=None, show_occupied=True,
+                    show_boxes=False, dom_opacity=0.30, wireframe=False, label_mode="all"):
+        return self._cached_figure(self._cache_key(), step_idx, kind, highlight,
+                                   show_occupied, show_boxes, repr(dom_opacity), wireframe, label_mode)
+
+    def _compute_figure_json(self, key, step_idx, kind, highlight, show_occupied,
+                            show_boxes, opacity, wireframe, label_mode):
+        # These consumers only read the private snapshot; no copy is needed here.
+        data = self._cached_bounds(key, step_idx, False)
+        if kind == "pairwise":
+            fig = vis.plot_pairwise_projections_2d(data, highlight_bound_id=highlight, label_mode=label_mode)
+        elif self.dimensions == 2:
+            fig = vis.plot_2d_bounds(data, highlight_bound_id=highlight, label_mode=label_mode)
+        else:
+            fig = vis.plot_3d_bounds(data, show_occupied_boxes=show_occupied,
+                                     show_search_boxes=show_boxes, highlight_bound_id=highlight,
+                                     dom_opacity=float(opacity), wireframe=wireframe, label_mode=label_mode)
+        return fig.to_json()
 
 
 state = AppState()
@@ -165,6 +213,13 @@ def selected_step():
     except (TypeError, ValueError):
         raise vis.PointValidationError("Step must be an integer.", "INVALID_STEP")
     return max(0, min(len(state.points), step))
+
+
+def selected_labels():
+    labels = request.args.get("labels", "all")
+    if labels not in ("all", "none"):
+        raise vis.PointValidationError("Labels must be all or none.", "INVALID_LABELS")
+    return labels
 
 
 @app.route("/")
@@ -288,6 +343,7 @@ def add_point():
     state.preset_name = None
     state.points.append(lb.Point(p_id, coords))
     state.current_step = len(state.points)
+    state._clear_caches()
     return get_state()
 
 
@@ -300,6 +356,7 @@ def delete_point():
     state.preset_name = None
     state.points.pop(idx)
     state.current_step = min(state.current_step, len(state.points))
+    state._clear_caches()
     return get_state()
 
 
@@ -346,39 +403,28 @@ def probe():
 @app.route("/api/figure_3d", methods=["GET"])
 def get_figure_3d():
     step_idx = selected_step()
+    labels = selected_labels()
+    wireframe = request.args.get("wireframe", "0") == "1"
     show_occupied = request.args.get("show_occupied", default="1") == "1"
     show_boxes = request.args.get("show_boxes", default="0") == "1"
     hl_bound = request.args.get("highlight", default=None, type=str)
     try:
-        dom_opacity = float(request.args.get("dom_opacity", 1.0))
+        dom_opacity = float(request.args.get("dom_opacity", 0.30))
         if not math.isfinite(dom_opacity):
             raise ValueError()
         dom_opacity = max(0.0, min(1.0, dom_opacity))
     except (ValueError, TypeError):
         raise vis.PointValidationError("Opacity must be finite.", "INVALID_OPACITY")
 
-    b_data = state.get_bounds_at_step(step_idx)
-    if state.dimensions == 2:
-        fig = vis.plot_2d_bounds(b_data, highlight_bound_id=hl_bound)
-    else:
-        fig = vis.plot_3d_bounds(
-            b_data,
-            show_occupied_boxes=show_occupied,
-            show_search_boxes=show_boxes,
-            highlight_bound_id=hl_bound,
-            dom_opacity=dom_opacity
-        )
-
-    return Response(fig.to_json(), mimetype="application/json")
+    return Response(state.figure_json(step_idx, "spatial", hl_bound, show_occupied,
+                                      show_boxes, dom_opacity, wireframe, labels), mimetype="application/json")
 
 
 @app.route("/api/figure_pairwise", methods=["GET"])
 def get_figure_pairwise():
     step_idx = selected_step()
     hl_bound = request.args.get("highlight", default=None, type=str)
-    b_data = state.get_bounds_at_step(step_idx)
-    fig = vis.plot_pairwise_projections_2d(b_data, highlight_bound_id=hl_bound)
-    return Response(fig.to_json(), mimetype="application/json")
+    return Response(state.figure_json(step_idx, "pairwise", hl_bound, label_mode=selected_labels()), mimetype="application/json")
 
 
 def main():

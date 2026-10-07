@@ -197,6 +197,7 @@ def extract_bounds_data(
         raw_bounds = graph.nodes
         adj_list = graph.adjacency_list
         k_neighbors = graph.k_neighbors
+        quasi = graph.quasi
     else:
         if hasattr(bound_set, "nonredundant_bounds"):
             raw_bounds = bound_set.nonredundant_bounds()
@@ -250,7 +251,7 @@ def extract_bounds_data(
             neighbors=node_neighbors,
             is_extreme=is_extreme,
             extreme_dim=extreme_dim,
-            is_quasi=bool(graph.quasi[idx]) if graph is not None else False
+            is_quasi=bool(quasi[idx]) if graph is not None else False
         )
         bound_records.append(record)
 
@@ -260,8 +261,8 @@ def extract_bounds_data(
         for k, v_idx in enumerate(record.neighbors)
         if v_idx is not None and v_idx != u_idx and v_idx < len(bound_records)
     ]
-    adjacency = ([(u, v) for u, neighbors in enumerate(adj_list) for v in neighbors]
-                 if graph is not None else [(u, v) for u, v, _ in edges_directed])
+    adjacency = (((u, v) for u, neighbors in enumerate(adj_list) for v in neighbors)
+                 if graph is not None else ((u, v) for u, v, _ in edges_directed))
     edges_undirected = sorted({(min(u, v), max(u, v)) for u, v in adjacency
                                if u != v and 0 <= v < len(bound_records)})
 
@@ -331,7 +332,55 @@ def create_bounds_table(bounds_data: Dict[str, Any]) -> List[Dict[str, Any]]:
 # Plotly 3D Visualization
 # ---------------------------------------------------------------------------
 
-# Curated color palette for distinct Pareto dominance cones D(z^i) (100% solid opacity)
+def _label_options(ids, label_mode):
+    if label_mode not in ("all", "none"):
+        raise ValueError("Label mode must be all or none.")
+    labels = [", ".join(escape(item) for item in value) if isinstance(value, list)
+              else escape(value) for value in ids]
+    return dict(text=labels if label_mode == "all" else [""] * len(labels))
+
+
+def _box_labels(fig):
+    """Use native, non-interactive annotation boxes at marker coordinates."""
+    for trace in fig.data:
+        if getattr(trace, "mode", None) != "markers+text":
+            continue
+        trace.mode = "markers"
+        is_3d = trace.type == "scatter3d"
+        for i, text in enumerate(trace.text):
+            if not text:
+                continue
+            position = trace.textposition or "top center"
+            label = dict(x=trace.x[i], y=trace.y[i], text=text, name=trace.legendgroup,
+                         showarrow=False, captureevents=False, bgcolor="#ffffff",
+                         bordercolor="#cbd5e1", borderwidth=1, borderpad=2,
+                         font=dict(color="#0f172a", size=12),
+                         xanchor="right" if "left" in position else "left" if "right" in position else "center",
+                         yanchor="top" if "bottom" in position else "bottom",
+                         xshift=-8 if "left" in position else 8 if "right" in position else 0,
+                         yshift=-10 if "bottom" in position else 10)
+            if is_3d:
+                label["z"] = trace.z[i]
+                fig.layout.scene.annotations += (go.layout.scene.Annotation(**label),)
+            else:
+                label.update(xref=trace.xaxis or "x", yref=trace.yaxis or "y")
+                fig.add_annotation(**label)
+    if any(trace.type == "scatter3d" for trace in fig.data):
+        for axis in (fig.layout.scene.xaxis, fig.layout.scene.yaxis, fig.layout.scene.zaxis):
+            axis.title.font.size = 16
+    else:
+        fig.update_xaxes(title_font_size=16)
+        fig.update_yaxes(title_font_size=16)
+    return fig
+
+
+def _view_revision(bounds_data, view):
+    return repr((view, bounds_data["dimensions"], bounds_data.get("sense"),
+                 bounds_data.get("lower_bound", bounds_data["anti_reference"]),
+                 bounds_data.get("upper_bound", bounds_data["reference_point"])))
+
+
+# Curated color palette for distinct Pareto dominance cones D(z^i)
 DOMINATED_CONE_PALETTE = [
     # (fill_color, wire_color)
     ("rgb(99, 102, 241)", "rgb(224, 231, 255)"),   # 1: Indigo (z1)
@@ -414,7 +463,9 @@ def plot_3d_bounds(
     show_search_boxes: bool = False,
     show_defining_rays: bool = False,
     highlight_bound_id: Optional[str] = None,
-    dom_opacity: float = 1.0
+    dom_opacity: float = 0.30,
+    wireframe: bool = False,
+    label_mode: str = "all"
 ) -> go.Figure:
     """
     Creates an interactive 3D scene in Plotly matching Klamroth et al. (2015) Figure 2.
@@ -427,6 +478,7 @@ def plot_3d_bounds(
         raise ImportError("plotly is required for 3D visualization.")
 
     fig = go.Figure()
+    traces = []
     lb_pt = bounds_data.get("lower_bound", bounds_data["anti_reference"])
     ub_pt = bounds_data.get("upper_bound", bounds_data["reference_point"])
     is_max = (bounds_data.get("sense") == "MAXIMIZE")
@@ -441,7 +493,7 @@ def plot_3d_bounds(
         name="Search Space [m, M]"
     )
     space_wire.line.dash = "dot"
-    fig.add_trace(space_wire)
+    traces.append(space_wire)
 
     # 2. Occupied / Dominated Zones D(N) (Pareto Dominance Cones from Figure 2)
     # For MINIMIZE: D(z) = [z, M] (dominated region above point z)
@@ -475,8 +527,12 @@ def plot_3d_bounds(
             else:
                 d_mesh.showlegend = False
 
-            fig.add_trace(d_mesh)
-            fig.add_trace(d_wire)
+            if wireframe:
+                d_wire.showlegend = d_mesh.showlegend
+                d_wire.name = d_mesh.name
+            else:
+                traces.append(d_mesh)
+            traces.append(d_wire)
 
     # 3. All Search Zones S(u) (Optional)
     # For MINIMIZE: S(u) = [LB, u]
@@ -504,8 +560,12 @@ def plot_3d_bounds(
             if idx == 0:
                 s_mesh.showlegend = True
                 s_mesh.name = "Search Zones S(u)"
-            fig.add_trace(s_mesh)
-            fig.add_trace(s_wire)
+            if wireframe:
+                s_wire.showlegend = s_mesh.showlegend
+                s_wire.name = s_mesh.name
+            else:
+                traces.append(s_mesh)
+            traces.append(s_wire)
 
     # 4. Highlighted Specific Search Zone S(u*)
     # When user selects a local bound in the table, highlight its exact search envelope
@@ -531,8 +591,12 @@ def plot_3d_bounds(
             h_mesh.legendgroup = "highlight_zone"
             h_wire.legendgroup = "highlight_zone"
             h_mesh.showlegend = True
-            fig.add_trace(h_mesh)
-            fig.add_trace(h_wire)
+            if wireframe:
+                h_wire.showlegend = True
+                h_wire.name = h_mesh.name
+            else:
+                traces.append(h_mesh)
+            traces.append(h_wire)
 
     # 5. Nondominated Points N (Pareto)
     if pts:
@@ -543,11 +607,13 @@ def plot_3d_bounds(
             f"<b>Point {escape(p['id'])}</b><br>Coords: ({p['coordinates'][0]:.2f}, {p['coordinates'][1]:.2f}, {p['coordinates'][2]:.2f})"
             for p in pts
         ]
-        fig.add_trace(go.Scatter3d(
+        traces.append(go.Scatter3d(
             x=px, y=py, z=pz,
             mode="markers+text",
             marker=dict(size=8, color="#ef4444", symbol="circle", line=dict(color="#ffffff", width=1.5)),
-            text=[escape(p["id"]) for p in pts],
+            **_label_options([p["id"] for p in pts], label_mode),
+            customdata=[p["id"] for p in pts],
+            textfont=dict(color="#ffffff", size=12),
             textposition="top right",
             hovertext=p_text,
             hoverinfo="text",
@@ -591,14 +657,14 @@ def plot_3d_bounds(
         )
         b_text.append(hover_info)
 
-    fig.add_trace(go.Scatter3d(
+    traces.append(go.Scatter3d(
         x=bx, y=by, z=bz,
         mode="markers+text",
         marker=dict(size=b_sizes, color=b_colors, symbol="diamond", line=dict(color="#0f172a", width=1.5)),
-        text=[escape(b.id) for b in b_records],
+        **_label_options([b.id for b in b_records], label_mode),
         customdata=[b.id for b in b_records],
         textposition="top center",
-        textfont=dict(color="#ffffff", size=11),
+        textfont=dict(color="#ffffff", size=12),
         hovertext=b_text,
         hoverinfo="text",
         name=bounds_trace_name,
@@ -607,17 +673,19 @@ def plot_3d_bounds(
     ))
 
     # 7. Reference and Anti-reference points
-    ref_labels = ["Reference m", "Anti-reference M"] if is_max else ["Anti-reference m", "Reference M"]
+    ref_labels = ["m", "M"]
     ref_colors = ["#94a3b8", "#10b981"] if is_max else ["#10b981", "#94a3b8"]
-    fig.add_trace(go.Scatter3d(
+    traces.append(go.Scatter3d(
         x=[lb_pt[0], ub_pt[0]],
         y=[lb_pt[1], ub_pt[1]],
         z=[lb_pt[2], ub_pt[2]],
         mode="markers+text",
         marker=dict(size=7, color=ref_colors, symbol="square"),
-        text=ref_labels,
+        **_label_options(ref_labels, label_mode),
         textposition="top left",
-        textfont=dict(color="#e2e8f0", size=11),
+        textfont=dict(color="#ffffff", size=12),
+        hovertext=ref_labels,
+        hoverinfo="text",
         name="Reference Point",
         legendgroup="reference_points",
         showlegend=True
@@ -639,7 +707,9 @@ def plot_3d_bounds(
     )
 
     # Readable, high-contrast dark-mode legend
+    fig.add_traces(traces)
     fig.update_layout(
+        uirevision=_view_revision(bounds_data, "spatial"),
         scene=dict(
             camera=camera_settings,
             xaxis=dict(title="Objective f₁ (z₁)", backgroundcolor="#0f172a", gridcolor="#334155", color="#e2e8f0"),
@@ -666,19 +736,21 @@ def plot_3d_bounds(
         )
     )
 
-    return fig
+    return _box_labels(fig)
 
 
 # ---------------------------------------------------------------------------
 # 2D Visualization
 # ---------------------------------------------------------------------------
 
-def plot_2d_bounds(bounds_data: Dict[str, Any], highlight_bound_id: Optional[str] = None) -> go.Figure:
+def plot_2d_bounds(bounds_data: Dict[str, Any], highlight_bound_id: Optional[str] = None,
+                   label_mode: str = "all") -> go.Figure:
     """
     Creates 2D visualization of points, local bounds, and search zones
     matching Fig. 1 from Paper 1 & Paper 2.
     """
     fig = go.Figure()
+    traces = []
     lb_pt = bounds_data.get("lower_bound", bounds_data["anti_reference"])
     ub_pt = bounds_data.get("upper_bound", bounds_data["reference_point"])
     is_max = (bounds_data.get("sense") == "MAXIMIZE")
@@ -701,7 +773,7 @@ def plot_2d_bounds(bounds_data: Dict[str, Any], highlight_bound_id: Optional[str
         else:
             x0, y0 = b.coordinates[0], b.coordinates[1]
             x1, y1 = ub_pt[0], ub_pt[1]
-        fig.add_trace(go.Scatter(
+        traces.append(go.Scatter(
             x=[x0, x1, x1, x0, x0],
             y=[y0, y0, y1, y1, y0],
             fill="toself",
@@ -721,13 +793,14 @@ def plot_2d_bounds(bounds_data: Dict[str, Any], highlight_bound_id: Optional[str
         for b in b_records
     ]
     bounds_name = "Local Bounds L(N)" if is_max else "Local Bounds U(N)"
-    fig.add_trace(go.Scatter(
+    traces.append(go.Scatter(
         x=bx, y=by,
         mode="markers+text",
         marker=dict(size=[12 if b.id == highlight_bound_id else 10 for b in b_records],
                     color=["#f97316" if b.id == highlight_bound_id else "#38bdf8" for b in b_records], symbol="diamond", line=dict(color="#0f172a", width=1.5)),
-        text=[escape(b.id) for b in b_records],
+        **_label_options([b.id for b in b_records], label_mode),
         customdata=[b.id for b in b_records],
+        textfont=dict(color="#ffffff", size=12),
         textposition="top center",
         hovertext=b_hover,
         hoverinfo="text",
@@ -743,11 +816,13 @@ def plot_2d_bounds(bounds_data: Dict[str, Any], highlight_bound_id: Optional[str
             f"<b>Point {escape(p['id'])}</b><br>({p['coordinates'][0]:.2f}, {p['coordinates'][1]:.2f})"
             for p in pts
         ]
-        fig.add_trace(go.Scatter(
+        traces.append(go.Scatter(
             x=px, y=py,
             mode="markers+text",
             marker=dict(size=10, color="#ef4444", symbol="circle", line=dict(color="#ffffff", width=1.5)),
-            text=[escape(p["id"]) for p in pts],
+            **_label_options([p["id"] for p in pts], label_mode),
+            customdata=[p["id"] for p in pts],
+            textfont=dict(color="#ffffff", size=12),
             textposition="bottom left",
             hovertext=p_hover,
             hoverinfo="text",
@@ -755,7 +830,9 @@ def plot_2d_bounds(bounds_data: Dict[str, Any], highlight_bound_id: Optional[str
             legendgroup="points"
         ))
 
+    fig.add_traces(traces)
     fig.update_layout(
+        uirevision=_view_revision(bounds_data, "spatial"),
         xaxis=dict(title="Objective f₁ (z₁)", range=[lb_pt[0] - 0.5, ub_pt[0] + 0.5], gridcolor="#334155"),
         yaxis=dict(title="Objective f₂ (z₂)", range=[lb_pt[1] - 0.5, ub_pt[1] + 0.5], gridcolor="#334155"),
         paper_bgcolor="#090d16",
@@ -770,7 +847,7 @@ def plot_2d_bounds(bounds_data: Dict[str, Any], highlight_bound_id: Optional[str
             font=dict(color="#f8fafc")
         )
     )
-    return fig
+    return _box_labels(fig)
 
 
 # ---------------------------------------------------------------------------
@@ -779,7 +856,8 @@ def plot_2d_bounds(bounds_data: Dict[str, Any], highlight_bound_id: Optional[str
 
 def plot_pairwise_projections_2d(
     bounds_data: Dict[str, Any],
-    highlight_bound_id: Optional[str] = None
+    highlight_bound_id: Optional[str] = None,
+    label_mode: str = "all"
 ) -> go.Figure:
     """
     Creates a centered matrix of pairwise 2D projections for 3D spaces:
@@ -807,6 +885,7 @@ def plot_pairwise_projections_2d(
 
     for idx, (di, dj) in enumerate(pairs):
         c = idx + 1
+        traces = []
 
         # Draw 2D bounding boxes for each bound as filled traces in legendgroup="local_bounds"
         for b in b_records:
@@ -822,59 +901,57 @@ def plot_pairwise_projections_2d(
             box_line = "rgba(249, 115, 22, 0.95)" if is_hl else "rgba(56, 189, 248, 0.4)"
             line_w = 2.5 if is_hl else 1
 
-            fig.add_trace(
-                go.Scatter(
-                    x=[x0, x1, x1, x0, x0],
-                    y=[y0, y0, y1, y1, y0],
-                    fill="toself",
-                    fillcolor=box_fill,
-                    line=dict(color=box_line, width=line_w),
-                    mode="lines",
-                    hoverinfo="skip",
-                    showlegend=False,
-                    legendgroup="local_bounds"
-                ),
-                row=1, col=c
-            )
-
-        # Plot bounds
-        b_colors = ["#f97316" if highlight_bound_id == b.id else "#38bdf8" for b in b_records]
-        b_sizes = [11 if highlight_bound_id == b.id else 7 for b in b_records]
-        fig.add_trace(
-            go.Scatter(
-                x=[b.coordinates[di] for b in b_records],
-                y=[b.coordinates[dj] for b in b_records],
-                mode="markers+text",
-                marker=dict(size=b_sizes, color=b_colors, symbol="diamond", line=dict(color="#090d16", width=1.5)),
-                text=[escape(b.id) for b in b_records],
-                customdata=[b.id for b in b_records],
-                textposition="top center",
-                showlegend=(idx == 0),
-                name="Local Bounds",
+            traces.append(go.Scatter(
+                x=[x0, x1, x1, x0, x0],
+                y=[y0, y0, y1, y1, y0],
+                fill="toself",
+                fillcolor=box_fill,
+                line=dict(color=box_line, width=line_w),
+                mode="lines",
+                hoverinfo="skip",
+                showlegend=False,
                 legendgroup="local_bounds"
-            ),
-            row=1, col=c
-        )
+            ))
 
-        # Plot points
-        if pts:
-            fig.add_trace(
-                go.Scatter(
-                    x=[p["coordinates"][di] for p in pts],
-                    y=[p["coordinates"][dj] for p in pts],
-                    mode="markers+text",
-                    marker=dict(size=8, color="#ef4444", symbol="circle", line=dict(color="#ffffff", width=1.2)),
-                    text=[escape(p["id"]) for p in pts],
-                    textposition="bottom right",
-                    showlegend=(idx == 0),
-                    name="Points N",
-                    legendgroup="points"
-                ),
-                row=1, col=c
-            )
+        # Coincident projections share one marker; all underlying boxes remain above.
+        for items, kind in (([(b.id, b.coordinates) for b in b_records], "bounds"),
+                            ([(p["id"], p["coordinates"]) for p in pts], "points")):
+            if not items:
+                continue
+            groups = {}
+            for item_id, coords in items:
+                groups.setdefault((coords[di], coords[dj]), []).append(item_id)
+            coordinates = list(groups)
+            ids = list(groups.values())
+            selected = [kind == "bounds" and highlight_bound_id in group for group in ids]
+            hover = [f"<b>{'Bounds' if kind == 'bounds' else 'Points'}: " +
+                     ", ".join(escape(item_id) for item_id in group) +
+                     f"</b><br>({x:.2f}, {y:.2f})"
+                     for (x, y), group in zip(coordinates, ids)]
+            traces.append(go.Scatter(
+                x=[xy[0] for xy in coordinates],
+                y=[xy[1] for xy in coordinates],
+                mode="markers+text",
+                marker=dict(size=[11 if chosen else 7 for chosen in selected] if kind == "bounds" else 8,
+                            color=["#f97316" if chosen else "#38bdf8" for chosen in selected] if kind == "bounds" else "#ef4444",
+                            symbol="diamond" if kind == "bounds" else "circle",
+                            line=dict(color="#090d16" if kind == "bounds" else "#ffffff", width=1.5)),
+                **_label_options(ids, label_mode),
+                customdata=[group[0] if len(group) == 1 else group for group in ids],
+                textfont=dict(color="#ffffff", size=12),
+                textposition="top center" if kind == "bounds" else "bottom right",
+                hovertext=hover,
+                hoverinfo="text",
+                showlegend=(idx == 0),
+                name="Local Bounds" if kind == "bounds" else "Points N",
+                legendgroup="local_bounds" if kind == "bounds" else "points"
+            ))
+
+        fig.add_traces(traces, rows=[1] * len(traces), cols=[c] * len(traces))
 
         fig.update_xaxes(
             title_text=f"Objective f_{di+1}",
+            range=[lb_pt[di] - 0.5, ub_pt[di] + 0.5],
             gridcolor="#334155",
             zerolinecolor="#475569",
             constrain="domain",
@@ -882,6 +959,7 @@ def plot_pairwise_projections_2d(
         )
         fig.update_yaxes(
             title_text=f"Objective f_{dj+1}",
+            range=[lb_pt[dj] - 0.5, ub_pt[dj] + 0.5],
             gridcolor="#334155",
             zerolinecolor="#475569",
             scaleanchor=f"x{'' if c == 1 else c}",
@@ -890,6 +968,7 @@ def plot_pairwise_projections_2d(
         )
 
     fig.update_layout(
+        uirevision=_view_revision(bounds_data, "pairwise"),
         paper_bgcolor="#090d16",
         plot_bgcolor="#0c1220",
         font=dict(color="#f8fafc", size=11),
@@ -908,7 +987,7 @@ def plot_pairwise_projections_2d(
             itemdoubleclick="toggleothers"
         )
     )
-    return fig
+    return _box_labels(fig)
 
 
 # ---------------------------------------------------------------------------
@@ -1014,6 +1093,7 @@ def plot_neighbor_graph_plotly(bounds_data: Dict[str, Any], mode: str = "combine
     pos = nx.spring_layout(G, seed=42, k=3.2 / math.sqrt(max(1, len(G.nodes))), iterations=70)
 
     fig = go.Figure()
+    traces = []
 
     if mode == "undirected":
         edge_x, edge_y = [], []
@@ -1022,7 +1102,7 @@ def plot_neighbor_graph_plotly(bounds_data: Dict[str, Any], mode: str = "combine
             x1, y1 = pos[v]
             edge_x.extend([x0, x1, None])
             edge_y.extend([y0, y1, None])
-        fig.add_trace(go.Scatter(
+        traces.append(go.Scatter(
             x=edge_x, y=edge_y,
             mode="lines",
             line=dict(width=2, color="#94a3b8"),
@@ -1040,7 +1120,7 @@ def plot_neighbor_graph_plotly(bounds_data: Dict[str, Any], mode: str = "combine
                 ey.extend([y0, y1, None])
             if ex:
                 c = component_colors[k % len(component_colors)]
-                fig.add_trace(go.Scatter(
+                traces.append(go.Scatter(
                     x=ex, y=ey,
                     mode="lines",
                     line=dict(width=2.5, color=c),
@@ -1058,7 +1138,7 @@ def plot_neighbor_graph_plotly(bounds_data: Dict[str, Any], mode: str = "combine
         c_str = ", ".join([f"{c:.2f}" for c in b.coordinates])
         hover_info.append(f"<b>{escape(b.id)}</b><br>Coords: [{c_str}]<br>{'Extreme' if b.is_extreme else 'Internal'}")
 
-    fig.add_trace(go.Scatter(
+    traces.append(go.Scatter(
         x=node_x, y=node_y,
         mode="markers+text",
         marker=dict(size=28, color=node_colors, line=dict(color="#0f172a", width=2)),
@@ -1070,6 +1150,7 @@ def plot_neighbor_graph_plotly(bounds_data: Dict[str, Any], mode: str = "combine
         name="Local Bounds"
     ))
 
+    fig.add_traces(traces)
     fig.update_layout(
         showlegend=True,
         paper_bgcolor="#0f172a",

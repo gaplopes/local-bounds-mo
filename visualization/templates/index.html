@@ -79,6 +79,9 @@
 
       <div class="h-4 w-px bg-slate-800 hidden sm:block"></div>
 
+      <button id="btn-new-custom" class="bg-slate-800 hover:bg-slate-700 text-sky-300 px-2.5 py-1 rounded border border-slate-700 font-medium"
+              title="Start empty using the displayed dimension, sense and interval bounds">New custom instance</button>
+
       <!-- Dimension Selector Pill -->
       <div class="flex items-center bg-slate-900 border border-slate-800 rounded p-0.5">
         <button id="btn-dim-2" class="px-2.5 py-0.5 rounded text-[11px] font-medium text-slate-400 hover:text-slate-200 transition">
@@ -231,7 +234,7 @@
         <div class="col-span-12 xl:col-span-7 panel rounded border flex flex-col overflow-hidden shadow-sm">
           
           <!-- Viewport Header Toolbar -->
-          <div class="panel-header px-2.5 py-1 flex items-center justify-between text-xs gap-2">
+          <div class="panel-header px-2.5 py-1 flex flex-wrap items-center justify-between text-xs gap-2">
             <div class="flex items-center space-x-2">
               <span class="text-[10px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1 select-none">
                 <i data-lucide="eye" class="w-3.5 h-3.5 text-sky-400"></i> View
@@ -256,6 +259,12 @@
               </div>
             </div>
 
+            <label class="flex items-center gap-1 text-[11px] text-slate-300" for="label-mode">Labels
+              <select id="label-mode" title="Show all point and bound labels, or hide them." class="bg-slate-900 border border-slate-700 rounded px-1 py-0.5">
+                <option value="all" selected>All</option>
+                <option value="none">None</option>
+              </select>
+            </label>
             <!-- Display Toggles -->
             <div class="flex items-center space-x-2.5 text-slate-300 text-[11px]" id="spatial-controls">
               <label class="flex items-center gap-1.5 cursor-pointer whitespace-nowrap" title="Toggle Pareto dominance cones [z, M] (Figure 2)">
@@ -266,6 +275,10 @@
                 <input type="checkbox" id="toggle-boxes" class="rounded accent-sky-500">
                 <span>Search Zones S(u)</span>
               </label>
+              <label class="flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
+                <input type="checkbox" id="toggle-wireframe" class="rounded accent-sky-500">
+                <span>Wireframe</span>
+              </label>
             </div>
           </div>
 
@@ -273,16 +286,18 @@
           <div class="relative flex-1 w-full h-full min-h-[380px] overflow-hidden">
             <div id="plotly-container" class="w-full h-full min-h-[380px] bg-[#090d16]"></div>
 
+            <div id="bound-chooser" class="hidden absolute left-3 bottom-3 z-10 bg-slate-900 border border-slate-700 rounded p-2 flex flex-wrap gap-2 text-xs" aria-label="Choose a coincident bound"></div>
+
             <!-- Floating Dominated Zones Opacity Control (Right-Side) -->
             <div id="opacity-widget" class="absolute right-3 top-1/2 -translate-y-1/2 z-10 flex flex-col items-center bg-slate-900/85 hover:bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-lg py-2 px-1.5 shadow-xl transition-all group select-none" title="Dominated Zones Opacity">
               <div class="flex items-center justify-center text-slate-400 group-hover:text-sky-400 transition mb-0.5" title="Dominated Zones Opacity">
                 <i data-lucide="layers" class="w-3.5 h-3.5"></i>
               </div>
               <span class="text-[9px] font-semibold text-slate-400 uppercase tracking-tight">D(N)</span>
-              <span id="opacity-val-badge" class="font-mono-num text-[10px] font-bold text-sky-400 my-1">100%</span>
+              <span id="opacity-val-badge" class="font-mono-num text-[10px] font-bold text-sky-400 my-1">30%</span>
               
               <div class="py-1 flex items-center justify-center">
-                <input type="range" id="opacity-slider" aria-label="Dominated region opacity" min="0" max="100" value="100" step="5"
+                <input type="range" id="opacity-slider" aria-label="Dominated region opacity" min="0" max="100" value="30" step="5"
                        orient="vertical"
                        class="opacity-range h-28 cursor-pointer accent-sky-500"
                        title="Drag to adjust Dominated Zones Opacity (0% - 100%)">
@@ -378,7 +393,9 @@
     let network = null;
     let stateRequest = 0, figureRequest = 0, graphRequest = 0;
     let probeRequest = 0;
-    let graphNodes = null;
+    let graphNodes = null, networkNodes = null, networkEdges = null;
+    const graphPositions = new Map(), plotViews = new Map();
+    let renderedPlotViewKey = null, viewRevision = 0, problemViewKey = null;
 
     function escapeHtml(value) {
       const span = document.createElement("span");
@@ -400,7 +417,7 @@
     let isPlaying = false;
     let playInterval = null;
     let isPhysicsEnabled = true;
-    let currentDomOpacity = 1.0;
+    let currentDomOpacity = 0.30;
 
     lucide.createIcons();
 
@@ -513,6 +530,9 @@
       const url = step !== null ? `/api/state?step=${step}` : "/api/state";
       const data = await fetchJSON(url);
       if (!data || requestId !== stateRequest) return;
+      const problemKey = JSON.stringify([data.dimensions, data.sense, data.lower_bound, data.upper_bound]);
+      if (problemViewKey !== null && problemViewKey !== problemKey) resetViews();
+      problemViewKey = problemKey;
       currentState = data;
       document.getElementById("probe-result").textContent = "";
       if (!currentState.table.some(row => row.ID === highlightBoundId)) highlightBoundId = null;
@@ -534,8 +554,7 @@
 
       renderPointsList();
       renderBoundsTable();
-      renderPlotlyView();
-      renderNetworkGraph();
+      await Promise.all([renderPlotlyView(), renderNetworkGraph()]);
     }
 
     function renderPointsList() {
@@ -613,96 +632,157 @@
       });
     }
 
+    function savePlotView(event = {}) {
+      if (!renderedPlotViewKey) return;
+      const layout = plotlyContainer._fullLayout || plotlyContainer.layout;
+      if (!layout) return;
+      const view = plotViews.get(renderedPlotViewKey) || {};
+      if (layout.scene?.camera) view.camera = JSON.parse(JSON.stringify(layout.scene.camera));
+      if (event["scene.camera"]) view.camera = JSON.parse(JSON.stringify(event["scene.camera"]));
+      for (const key of Object.keys(layout).filter(k => /^[xy]axis\d*$/.test(k))) {
+        const range = event[`${key}.range`] || layout[key].range;
+        if (range) view[key] = [...range];
+        for (let i = 0; i < 2; i++) {
+          if (event[`${key}.range[${i}]`] !== undefined && view[key]) view[key][i] = event[`${key}.range[${i}]`];
+        }
+      }
+      plotViews.set(renderedPlotViewKey, view);
+    }
+
+    function resetViews() {
+      ++viewRevision;
+      plotViews.clear();
+      renderedPlotViewKey = null;
+      graphPositions.clear();
+      if (network) network.destroy();
+      network = networkNodes = networkEdges = graphNodes = null;
+      document.getElementById("bound-chooser").classList.add("hidden");
+      if (isPlaying) playPauseBtn.onclick();
+    }
+
     async function renderPlotlyView() {
-      const requestId = ++figureRequest;
-      const stateId = stateRequest;
-      let endpoint = (activeViewTab === "pairwise") ? "/api/figure_pairwise" : "/api/figure_3d";
-      const showOccupied = document.getElementById("toggle-occupied")?.checked ? "1" : "0";
-      const showBoxes = document.getElementById("toggle-boxes")?.checked ? "1" : "0";
-
-      let query = `?step=${currentStep}&show_occupied=${showOccupied}&show_boxes=${showBoxes}&dom_opacity=${currentDomOpacity}`;
+      const requestId = ++figureRequest, stateId = stateRequest;
+      savePlotView();
+      const viewKey = `${viewRevision}:${activeViewTab}:${currentState.dimensions}`;
+      const endpoint = activeViewTab === "pairwise" ? "/api/figure_pairwise" : "/api/figure_3d";
+      const showOccupied = document.getElementById("toggle-occupied").checked ? "1" : "0";
+      const showBoxes = document.getElementById("toggle-boxes").checked ? "1" : "0";
+      const wireframe = document.getElementById("toggle-wireframe").checked ? "1" : "0";
+      const labels = document.getElementById("label-mode").value;
+      let query = `?step=${currentStep}&show_occupied=${showOccupied}&show_boxes=${showBoxes}&dom_opacity=${currentDomOpacity}&wireframe=${wireframe}&labels=${labels}`;
       if (highlightBoundId) query += `&highlight=${encodeURIComponent(highlightBoundId)}`;
-
       const figData = await fetchJSON(`${endpoint}${query}`);
       if (!figData || requestId !== figureRequest || stateId !== stateRequest) return;
-
+      savePlotView();
+      const view = plotViews.get(viewKey);
+      figData.layout.uirevision = viewKey;
+      if (view?.camera && figData.layout.scene) figData.layout.scene.camera = view.camera;
+      if (view) for (const key of Object.keys(view).filter(k => /^[xy]axis\d*$/.test(k))) {
+        if (figData.layout[key]) Object.assign(figData.layout[key], {range: view[key], autorange: false});
+      }
+      document.getElementById("bound-chooser").classList.add("hidden");
       await Plotly.react("plotly-container", figData.data, figData.layout, {
-        responsive: true,
-        displayModeBar: true,
-        displaylogo: false
+        responsive: true, displayModeBar: true, displaylogo: false
       });
+      if (requestId !== figureRequest || stateId !== stateRequest) return;
+      renderedPlotViewKey = viewKey;
       if (!plotlyContainer._boundSelectionInstalled) {
+        plotlyContainer.on("plotly_relayout", savePlotView);
         plotlyContainer.on("plotly_click", (event) => {
-          const point = event.points[0];
-          const boundId = point?.data?.customdata?.[point.pointNumber];
-          if (boundId && currentState.table.some(row => row.ID === boundId)) selectBound(boundId);
+          const point = event.points?.[0];
+          if (point?.data?.legendgroup !== "local_bounds") return;
+          const value = point.data.customdata?.[point.pointNumber];
+          const ids = (Array.isArray(value) ? value : [value]).filter(id => currentState.table.some(row => row.ID === id));
+          if (ids.length === 1) selectBound(ids[0]);
+          if (ids.length > 1) {
+            const chooser = document.getElementById("bound-chooser");
+            chooser.innerHTML = "";
+            const prompt = document.createElement("span");
+            prompt.textContent = "Coincident bounds — choose:";
+            chooser.appendChild(prompt);
+            ids.forEach(id => {
+              const button = document.createElement("button");
+              button.textContent = id;
+              button.className = "text-sky-300 border border-slate-600 rounded px-2 py-1 hover:bg-slate-700";
+              button.onclick = () => { chooser.classList.add("hidden"); selectBound(id); };
+              chooser.appendChild(button);
+            });
+            chooser.classList.remove("hidden");
+          }
+        });
+        plotlyContainer.on("plotly_restyle", ([changes]) => {
+          if (!Object.hasOwn(changes, "visible")) return;
+          const updates = {};
+          for (const path of ["annotations", "scene.annotations"]) {
+            const annotations = path === "annotations" ? plotlyContainer.layout.annotations : plotlyContainer.layout.scene?.annotations;
+            (annotations || []).forEach((label, index) => {
+              if (!label.name) return;
+              const visible = plotlyContainer.data.some(trace =>
+                trace.legendgroup === label.name && trace.mode === "markers" && trace.visible !== "legendonly" && trace.visible !== false);
+              if ((label.visible !== false) !== visible) updates[`${path}[${index}].visible`] = visible;
+            });
+          }
+          if (Object.keys(updates).length) {
+            const camera = plotViews.get(renderedPlotViewKey)?.camera;
+            if (camera && plotlyContainer.layout.scene) updates["scene.camera"] = camera;
+            Plotly.relayout(plotlyContainer, updates);
+          }
         });
         plotlyContainer._boundSelectionInstalled = true;
       }
     }
 
     async function renderNetworkGraph() {
-      const requestId = ++graphRequest;
-      const stateId = stateRequest;
+      const requestId = ++graphRequest, stateId = stateRequest;
       const graphData = await fetchJSON(`/api/graph?step=${currentStep}&mode=${activeGraphMode}&view=${activeGraphView}`);
       if (!graphData || requestId !== graphRequest || stateId !== stateRequest) return;
       const counts = graphData.counts;
       document.getElementById("graph-counts").textContent = counts
         ? `${counts.total} total · ${counts.quasi} quasi · ${counts.nonredundant} nonredundant` : "";
-
-      const container = document.getElementById("vis-network-container");
-
-      const nodes = new vis.DataSet(graphData.nodes);
-      graphNodes = graphData.nodes;
-      const edges = new vis.DataSet(graphData.edges);
-
-      const options = {
-        nodes: {
-          borderWidth: 2,
-          shadow: false,
-          font: { color: "#f8fafc", size: 12, face: "monospace" }
-        },
-        edges: {
-          font: { size: 11, strokeWidth: 0, face: "monospace" },
-          smooth: { type: "curvedCW", roundness: 0.25 }
-        },
-        physics: {
-          enabled: isPhysicsEnabled,
-          solver: "forceAtlas2Based",
-          forceAtlas2Based: {
-            gravitationalConstant: -100,
-            centralGravity: 0.008,
-            springLength: 220,
-            springConstant: 0.06,
-            damping: 0.45,
-            avoidOverlap: 1.0
-          }
-        },
-        interaction: { hover: true, tooltipDelay: 80 }
-      };
-
-      if (network) {
-        network.destroy();
-      }
-
-      network = new vis.Network(container, { nodes, edges }, options);
-      syncGraphSelection();
-
-      network.on("selectNode", function (params) {
-        if (params.nodes.length > 0) {
-          const selectedNodeId = params.nodes[0];
-          const nodeObj = nodes.get(selectedNodeId);
-          if (nodeObj && nodeObj.bound_id) {
-            if (nodeObj.is_quasi) {
-              highlightBoundId = null;
-              renderBoundsTable();
-              renderPlotlyView();
-            } else {
-              selectBound(nodeObj.bound_id);
-            }
-          }
-        }
+      const viewport = network ? {position: network.getViewPosition(), scale: network.getScale(), animation: false} : null;
+      if (network) for (const [id, position] of Object.entries(network.getPositions())) graphPositions.set(id, position);
+      const ids = new Map(graphData.nodes.map(node => [node.id, node.bound_id]));
+      graphNodes = graphData.nodes.map(node => {
+        const position = graphPositions.get(node.bound_id);
+        return {...node, id: node.bound_id, ...position, fixed: !!position, physics: !position};
       });
+      const edges = graphData.edges.map(edge => {
+        const from = ids.get(edge.from), to = ids.get(edge.to);
+        return {...edge, from, to, id: JSON.stringify([from, to, edge.label || ""])};
+      });
+      if (network) {
+        const nodeIds = new Set(graphNodes.map(node => node.id)), edgeIds = new Set(edges.map(edge => edge.id));
+        networkEdges.remove(networkEdges.getIds().filter(id => !edgeIds.has(id)));
+        networkNodes.remove(networkNodes.getIds().filter(id => !nodeIds.has(id)));
+        networkNodes.update(graphNodes);
+        networkEdges.update(edges);
+        network.moveTo(viewport);
+      } else {
+        networkNodes = new vis.DataSet(graphNodes);
+        networkEdges = new vis.DataSet(edges);
+        network = new vis.Network(document.getElementById("vis-network-container"), {nodes: networkNodes, edges: networkEdges}, {
+          nodes: {borderWidth: 2, shadow: false, font: {color: "#f8fafc", size: 12, face: "monospace"}},
+          edges: {font: {size: 11, strokeWidth: 0, face: "monospace"}, smooth: {type: "curvedCW", roundness: 0.25}},
+          physics: {enabled: isPhysicsEnabled, solver: "forceAtlas2Based",
+            stabilization: {fit: false},
+            forceAtlas2Based: {gravitationalConstant: -100, centralGravity: 0.008, springLength: 220, springConstant: 0.06, damping: 0.45, avoidOverlap: 1.0}},
+          interaction: {hover: true, tooltipDelay: 80}
+        });
+        const initialNetwork = network;
+        network.once("stabilized", () => {
+          if (network === initialNetwork && requestId === graphRequest) network.fit({animation: false});
+        });
+        network.on("selectNode", params => {
+          const node = networkNodes.get(params.nodes[0]);
+          if (!node) return;
+          if (node.is_quasi) {
+            highlightBoundId = null;
+            renderBoundsTable();
+            renderPlotlyView();
+          } else selectBound(node.bound_id);
+        });
+      }
+      syncGraphSelection();
     }
 
     function syncGraphSelection() {
@@ -838,13 +918,15 @@
     async function loadSelectedPreset() {
       hideError();
       const preset = document.getElementById("preset-select").value;
-      await fetch("/api/load_preset", {
+      const res = await fetch("/api/load_preset", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ preset })
       });
+      if (!res.ok) { showError((await res.json()).error || "Failed to load preset"); return; }
       highlightBoundId = null;
-      syncState();
+      resetViews();
+      await syncState();
     }
 
     document.getElementById("btn-load-preset").onclick = loadSelectedPreset;
@@ -888,12 +970,23 @@
 
       if (res.ok) {
         highlightBoundId = null;
-        syncState();
-      } else {
-        const err = await res.json();
-        showError(err.error || "Failed to configure problem settings");
+        resetViews();
+        await syncState();
+        return true;
       }
+      const err = await res.json();
+      showError(err.error || "Failed to configure problem settings");
+      return false;
     }
+
+    document.getElementById("btn-new-custom").onclick = async () => {
+      if (await applyConfig()) {
+        document.getElementById("pt-id").value = "";
+        const coords = document.getElementById("pt-coords");
+        coords.value = "";
+        coords.focus();
+      }
+    };
 
     function updateViewTabUI() {
       document.querySelectorAll(".view-tab").forEach(b => {
@@ -913,7 +1006,7 @@
     function syncOpacityWidgetState() {
       const opacityWidget = document.getElementById("opacity-widget");
       const opacitySlider = document.getElementById("opacity-slider");
-      const isOccupiedChecked = document.getElementById("toggle-occupied")?.checked;
+      const isOccupiedChecked = document.getElementById("toggle-occupied").checked && !document.getElementById("toggle-wireframe").checked;
       const is3DSpatial = (activeViewTab === "spatial" && currentState && currentState.dimensions === 3);
       if (opacityWidget) {
         if (!is3DSpatial) {
@@ -981,7 +1074,10 @@
 
     document.getElementById("btn-toggle-physics").onclick = (e) => {
       isPhysicsEnabled = !isPhysicsEnabled;
-      if (network) network.setOptions({ physics: { enabled: isPhysicsEnabled } });
+      if (network) {
+        networkNodes.update(networkNodes.getIds().map(id => ({id, fixed: !isPhysicsEnabled, physics: isPhysicsEnabled})));
+        network.setOptions({ physics: { enabled: isPhysicsEnabled } });
+      }
       e.target.textContent = isPhysicsEnabled ? "Freeze Layout" : "Enable Physics";
     };
 
@@ -990,6 +1086,11 @@
       renderPlotlyView();
     };
     document.getElementById("toggle-boxes").onchange = () => renderPlotlyView();
+    document.getElementById("label-mode").onchange = () => renderPlotlyView();
+    document.getElementById("toggle-wireframe").onchange = () => {
+      syncOpacityWidgetState();
+      renderPlotlyView();
+    };
 
     syncState();
   </script>

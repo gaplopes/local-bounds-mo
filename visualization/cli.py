@@ -178,10 +178,23 @@ def main():
                 [0.0 if sense == lb.Objective.MINIMIZE else 10.0] * dims)
         if len(ref) != dims or len(anti) != dims:
             raise ValueError("Reference and anti-reference must match dimensions")
-        tracker = vis.LocalBoundsTracker(ref, anti, sense=sense)
+        if args.step_by_step:
+            tracker = vis.LocalBoundsTracker(ref, anti, sense=sense)
+        else:
+            nbs = lb.NeighborhoodBoundSet(ref, anti, sense=sense)
+            lower, upper = (anti, ref) if sense == lb.Objective.MINIMIZE else (ref, anti)
         points_to_insert = [lb.Point(f"z{i+1}", coords) for i, coords in enumerate(raw_points)]
-        for point in points_to_insert:
-            tracker.add_point(point)
+        if args.step_by_step:
+            for point in points_to_insert:
+                tracker.add_point(point)
+            final_data = tracker.steps[-1].bounds_data
+        else:
+            inserted = []
+            for point in points_to_insert:
+                vis.validate_point(list(point.coordinates), point.id, inserted, lower, upper, sense)
+                nbs.update(point)
+                inserted.append(point)
+            final_data = vis.extract_bounds_data(nbs, ref, anti, inserted, sense=sense)
     except (ValueError, TypeError, RuntimeError) as error:
         parser.error(str(error))
 
@@ -192,14 +205,13 @@ def main():
     print(f"  Points to insert: {len(points_to_insert)}")
     print("===================================================================\n")
 
-    for step in tracker.steps[1:]:
-        if args.step_by_step:
+    if args.step_by_step:
+        for step in tracker.steps[1:]:
             print(f"--- Step {step.step}: Added Point {step.point_added.id} ({step.point_added.coordinates}) ---")
             print(f"  Bounds destroyed: {step.destroyed_bounds if step.destroyed_bounds else 'None'}")
             print(f"  Bounds created:   {step.new_bounds}")
             print(f"  Current |U(N)|:   {len(step.bounds_data['bounds'])}\n")
 
-    final_data = tracker.steps[-1].bounds_data
     table = vis.create_bounds_table(final_data)
 
     print("Final Local Bounds Table:")
