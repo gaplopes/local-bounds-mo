@@ -56,7 +56,7 @@ public:
    * @brief Constructs a BoundSet with only the reference point.
    *
    * Used by Algorithms 2/3/Naive which don't need defining-point tracking.
-   * The anti-reference defaults to 0 for MINIMIZE, max for MAXIMIZE.
+   * No anti-reference constraint or defining-point metadata is available.
    *
    * @param reference_point For MINIMIZE: the nadir point M.
    *                        For MAXIMIZE: the ideal point m.
@@ -64,10 +64,7 @@ public:
   explicit BoundSet(const std::vector<T> &reference_point)
       : dimensions_(reference_point.size()), reference_point_(reference_point),
         next_bound_id_(1) {
-    if (reference_point.empty()) {
-      throw std::invalid_argument(
-          "Reference point must have at least one dimension");
-    }
+    detail::validate_coordinates(reference_point, dimensions_);
     bounds_.push_back(LocalBound<T>::initial(reference_point, "u0"));
   }
 
@@ -87,14 +84,7 @@ public:
            const std::vector<T> &anti_reference)
       : dimensions_(reference_point.size()), reference_point_(reference_point),
         anti_reference_(anti_reference), next_bound_id_(1) {
-    if (reference_point.empty()) {
-      throw std::invalid_argument(
-          "Reference point must have at least one dimension");
-    }
-    if (anti_reference.size() != reference_point.size()) {
-      throw std::invalid_argument(
-          "Anti-reference must have same dimensions as reference");
-    }
+    detail::validate_interval<T, Sense>(reference_point, anti_reference);
     bounds_.push_back(
         LocalBound<T>::initial(reference_point, anti_reference, "u0"));
   }
@@ -116,10 +106,7 @@ public:
    * dominate any local bound.
    */
   bool update_re(const Point<T> &point) {
-    if (point.dimensions() != dimensions_) {
-      throw std::invalid_argument(
-          "Point dimensions must match bound set dimensions");
-    }
+    detail::validate_update<T, Sense>(point.coordinates, reference_point_, anti_reference_);
     return update_redundancy_elimination(bounds_, point);
   }
 
@@ -133,10 +120,7 @@ public:
    * dominate any local bound.
    */
   bool update_re_enhanced(const Point<T> &point) {
-    if (point.dimensions() != dimensions_) {
-      throw std::invalid_argument(
-          "Point dimensions must match bound set dimensions");
-    }
+    detail::validate_update<T, Sense>(point.coordinates, reference_point_, anti_reference_);
     return update_redundancy_elimination_enhanced(bounds_, point);
   }
 
@@ -153,10 +137,8 @@ public:
    * dominate any local bound.
    */
   bool update_ra_sa(const Point<T> &point) {
-    if (point.dimensions() != dimensions_) {
-      throw std::invalid_argument(
-          "Point dimensions must match bound set dimensions");
-    }
+    detail::validate_update<T, Sense>(point.coordinates, reference_point_, anti_reference_);
+    validate_ra(point, true);
     return update_redundancy_avoidance_sa(bounds_, point);
   }
 
@@ -173,10 +155,8 @@ public:
    * dominate any local bound.
    */
   bool update_ra(const Point<T> &point) {
-    if (point.dimensions() != dimensions_) {
-      throw std::invalid_argument(
-          "Point dimensions must match bound set dimensions");
-    }
+    detail::validate_update<T, Sense>(point.coordinates, reference_point_, anti_reference_);
+    validate_ra(point, false);
     return update_redundancy_avoidance(bounds_, point);
   }
 
@@ -193,18 +173,17 @@ public:
    * Algorithm 5 is preferred over Algorithm 4 because it handles both the
    * general position assumption (SA) and general case instances. If the anti-
    * reference point was not provided (single-argument constructor), Algorithm 2
-   * is used as fallback regardless of p.
+   * is used as fallback regardless of p. RE is also used if defining metadata
+   * has been discarded or the point lies on the anti-reference boundary.
    *
    * @param point The new nondominated point.
    * @return true if the bound set was updated, false if the point did not
    * dominate any local bound.
    */
   bool update_auto(const Point<T> &point) {
-    if (point.dimensions() != dimensions_) {
-      throw std::invalid_argument(
-          "Point dimensions must match bound set dimensions");
-    }
-    if (dimensions_ >= 6 && has_anti_reference()) {
+    detail::validate_update<T, Sense>(point.coordinates, reference_point_, anti_reference_);
+    if (dimensions_ >= 6 && has_ra_metadata(false) &&
+        strictly_dominates<T, Sense>(anti_reference_, point.coordinates)) {
       return update_redundancy_avoidance(bounds_, point);
     } else {
       return update_redundancy_elimination(bounds_, point);
@@ -223,10 +202,7 @@ public:
    * dominate any local bound.
    */
   bool update_naive(const Point<T> &point) {
-    if (point.dimensions() != dimensions_) {
-      throw std::invalid_argument(
-          "Point dimensions must match bound set dimensions");
-    }
+    detail::validate_update<T, Sense>(point.coordinates, reference_point_, anti_reference_);
     return _update_naive(bounds_, point);
   }
 
@@ -258,10 +234,8 @@ public:
    * @return true if the point is in the search region.
    */
   [[nodiscard]] bool is_in_search_region(const std::vector<T> &point) const {
-    if (point.size() != dimensions_) {
-      throw std::invalid_argument(
-          "Point dimensions must match bound set dimensions");
-    }
+    detail::validate_coordinates(point, dimensions_);
+    if (!detail::in_interval<T, Sense>(point, reference_point_, anti_reference_)) return false;
     for (const auto &bound : bounds_) {
       if (strictly_dominates<T, Sense>(point, bound.coordinates)) {
         return true;
@@ -278,6 +252,8 @@ public:
    */
   [[nodiscard]] std::optional<LocalBound<T>>
   find_containing_bound(const std::vector<T> &point) const {
+    detail::validate_coordinates(point, dimensions_);
+    if (!detail::in_interval<T, Sense>(point, reference_point_, anti_reference_)) return std::nullopt;
     for (const auto &bound : bounds_) {
       if (strictly_dominates<T, Sense>(point, bound.coordinates)) {
         return bound;
@@ -287,6 +263,20 @@ public:
   }
 
 private:
+  bool has_ra_metadata(bool sa) const {
+    if (!has_anti_reference()) return false;
+    return std::all_of(bounds_.begin(), bounds_.end(), [this, sa](const auto& bound) {
+      return (sa ? bound.defining_points.size() : bound.defining_point_sets.size()) == dimensions_;
+    });
+  }
+
+  void validate_ra(const Point<T>& point, bool sa) const {
+    if (!has_ra_metadata(sa))
+      throw std::logic_error("RA requires anti-reference and defining metadata; use a fresh BoundSet when switching algorithms");
+    if (!strictly_dominates<T, Sense>(anti_reference_, point.coordinates))
+      throw std::invalid_argument("RA requires points strictly inside the reference interval");
+  }
+
   /**
    * @brief Returns true if the anti-reference point was provided at
    * construction.

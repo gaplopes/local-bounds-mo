@@ -12,7 +12,10 @@
 #ifndef LOCAL_BOUNDS_DOMINANCE_HPP
 #define LOCAL_BOUNDS_DOMINANCE_HPP
 
-#include <cassert>
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 #include "types.hpp"
@@ -51,6 +54,44 @@ constexpr bool is_at_least_as_good(const T& a, const T& b) {
     }
 }
 
+template <typename T>
+void validate_coordinates(const std::vector<T>& point, std::size_t dimensions) {
+    if (point.size() != dimensions || dimensions == 0)
+        throw std::invalid_argument("Coordinates must match a nonzero dimension");
+    if constexpr (std::is_floating_point_v<T>) {
+        for (const auto& value : point)
+            if (!std::isfinite(value))
+                throw std::invalid_argument("Coordinates must be finite");
+    }
+}
+
+template <typename T, Objective Sense>
+void validate_interval(const std::vector<T>& reference, const std::vector<T>& anti) {
+    validate_coordinates(reference, reference.size());
+    validate_coordinates(anti, reference.size());
+    if (!std::equal(anti.begin(), anti.end(), reference.begin(), is_better<T, Sense>))
+        throw std::invalid_argument("Anti-reference must be strictly better than reference");
+}
+
+template <typename T, Objective Sense>
+bool in_interval(const std::vector<T>& point, const std::vector<T>& reference,
+                 const std::vector<T>& anti) {
+    for (std::size_t i = 0; i < reference.size(); ++i) {
+        if (!is_better<T, Sense>(point[i], reference[i]) ||
+            (!anti.empty() && !is_at_least_as_good<T, Sense>(anti[i], point[i])))
+            return false;
+    }
+    return true;
+}
+
+template <typename T, Objective Sense>
+void validate_update(const std::vector<T>& point, const std::vector<T>& reference,
+                     const std::vector<T>& anti) {
+    validate_coordinates(point, reference.size());
+    if (!in_interval<T, Sense>(point, reference, anti))
+        throw std::invalid_argument("Point must be inside the anti-inclusive, reference-exclusive interval");
+}
+
 }  // namespace detail
 
 /**
@@ -67,7 +108,7 @@ constexpr bool is_at_least_as_good(const T& a, const T& b) {
  */
 template <typename T, Objective Sense = Objective::MINIMIZE>
 bool weakly_dominates(const std::vector<T>& v1, const std::vector<T>& v2) {
-    assert(v1.size() == v2.size() && "Vectors must have same dimensions");
+    if (v1.size() != v2.size()) throw std::invalid_argument("Vectors must have same dimensions");
     for (std::size_t i = 0; i < v1.size(); ++i) {
         if (!detail::is_at_least_as_good<T, Sense>(v1[i], v2[i])) {
             return false;
@@ -90,7 +131,7 @@ bool weakly_dominates(const std::vector<T>& v1, const std::vector<T>& v2) {
  */
 template <typename T, Objective Sense = Objective::MINIMIZE>
 bool strictly_dominates(const std::vector<T>& v1, const std::vector<T>& v2) {
-    assert(v1.size() == v2.size() && "Vectors must have same dimensions");
+    if (v1.size() != v2.size()) throw std::invalid_argument("Vectors must have same dimensions");
     for (std::size_t i = 0; i < v1.size(); ++i) {
         if (!detail::is_better<T, Sense>(v1[i], v2[i])) {
             return false;

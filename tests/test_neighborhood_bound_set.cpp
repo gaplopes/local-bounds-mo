@@ -1,5 +1,6 @@
 #include <algorithm>
-#include <cassert>
+#include <stdexcept>
+#define CHECK(condition) do { if (!(condition)) throw std::runtime_error(#condition); } while (false)
 #include <cstdint>
 #include <iostream>
 #include <set>
@@ -37,7 +38,7 @@ void assert_bounds_equal(
   auto exp_c = expected_coords;
   std::sort(exp_c.begin(), exp_c.end());
   exp_c.erase(std::unique(exp_c.begin(), exp_c.end()), exp_c.end());
-  assert(got_c == exp_c);
+  CHECK(got_c == exp_c);
 }
 
 void test_example_2_8_from_paper() {
@@ -164,12 +165,12 @@ void test_zbar_dominates_several_bounds() {
   nbs.update(z_bar);
   reference.update_ra(z_bar);
 
-  assert(compare_bounds(nbs.bounds(), reference.bounds()));
+  CHECK(compare_bounds(nbs.bounds(), reference.bounds()));
   std::cout << "Multi-dominated update passed.\n\n";
 }
 
-void test_random_cross_validation() {
-  std::cout << "--- Random cross-validation (Algorithm 1 vs Algorithm 5) ---\n";
+void test_fixed_cross_validation() {
+  std::cout << "--- Fixed cross-validation (Algorithm 1 vs Algorithm 5) ---\n";
 
   const std::vector<int64_t> M = {100, 100, 100, 100};
   const std::vector<int64_t> m = {0, 0, 0, 0};
@@ -198,10 +199,10 @@ void test_random_cross_validation() {
   for (const auto& p : points) {
     nbs.update(p);
     ra.update_ra(p);
-    assert(compare_bounds(nbs.bounds(), ra.bounds()));
+    CHECK(compare_bounds(nbs.nonredundant_bounds(), ra.bounds()));
   }
 
-  std::cout << "Random cross-validation passed.\n\n";
+  std::cout << "Fixed cross-validation passed.\n\n";
 }
 
 void test_update_return_value() {
@@ -214,14 +215,14 @@ void test_update_return_value() {
 
   // Valid point in search region -> returns true
   bool r1 = nbs.update(IntPoint("z1", {4, 0, 4}));
-  assert(r1);
+  CHECK(r1);
   (void)r1;
 
   // Dominated point (5, 5, 5) is outside search region -> returns false, bounds unchanged
   size_t size_before = nbs.size();
   bool r_dom = nbs.update(IntPoint("z_dom", {5, 5, 5}));
-  assert(!r_dom);
-  assert(nbs.size() == size_before);
+  CHECK(!r_dom);
+  CHECK(nbs.size() == size_before);
   (void)size_before;
   (void)r_dom;
 
@@ -233,7 +234,7 @@ int main() {
   test_example_4_2_from_paper();
   test_example_4_13_ngp_from_paper();
   test_zbar_dominates_several_bounds();
-  test_random_cross_validation();
+  test_fixed_cross_validation();
   test_update_return_value();
 
   std::cout << "All NeighborhoodBoundSet tests passed successfully!\n";

@@ -15,7 +15,7 @@ namespace local_bounds {
  * @brief Tree-accelerated bound set using a LUBTree spatial index.
  *
  * Provides the same API as BoundSet but uses a LBTree to accelerate the
- * filtering steps of Algorithms 2/3 (Redundancy Elimination).
+ * filtering steps of RE. Enhanced and naive methods are API aliases.
  *
  * @note Algorithms 4/5 (Redundancy Avoidance) require tracking defining point
  *       sets (Z^j(u)) which a spatial index does not support. Use BoundSet
@@ -41,7 +41,8 @@ public:
                         size_t max_leaf_size = 32, size_t num_children = 8)
       : dimensions_(reference_point.size()),
         tree_(max_leaf_size, num_children, reference_point.size()),
-        next_bound_id_(1) {
+        reference_point_(reference_point) {
+    detail::validate_coordinates(reference_point, dimensions_);
     tree_.Insert(reference_point);
   }
 
@@ -56,11 +57,12 @@ public:
    * @param num_children    Number of children created on split.
    */
   BoundSetTree(const std::vector<T> &reference_point,
-               [[maybe_unused]] const std::vector<T> &anti_reference,
+               const std::vector<T> &anti_reference,
                size_t max_leaf_size = 32, size_t num_children = 8)
       : dimensions_(reference_point.size()),
         tree_(max_leaf_size, num_children, reference_point.size()),
-        next_bound_id_(1) {
+        reference_point_(reference_point), anti_reference_(anti_reference) {
+    detail::validate_interval<T, Sense>(reference_point, anti_reference);
     tree_.Insert(reference_point);
   }
 
@@ -71,17 +73,17 @@ public:
    * @return true if the bound set was updated, false if the point did not
    * dominate any local bound.
    */
-  bool update_re(const Point<T> &point) { return update_re_impl(point, false); }
+  bool update_re(const Point<T> &point) { return update_re_impl(point); }
 
   /**
-   * @brief Updates using Algorithm 3 (Enhanced Redundancy Elimination).
+   * @brief API-compatible alias of this class's indexed RE implementation.
    *
    * @param point The new nondominated point.
    * @return true if the bound set was updated, false if the point did not
    * dominate any local bound.
    */
   bool update_re_enhanced(const Point<T> &point) {
-    return update_re_impl(point, true);
+    return update_re_impl(point);
   }
 
   /**
@@ -140,6 +142,8 @@ public:
    * @return true if the point is in the search region.
    */
   [[nodiscard]] bool is_in_search_region(const std::vector<T> &point) const {
+    detail::validate_coordinates(point, dimensions_);
+    if (!detail::in_interval<T, Sense>(point, reference_point_, anti_reference_)) return false;
     auto all_lubs = tree_.GetAllBounds();
     for (const auto &lub : all_lubs) {
       if (strictly_dominates<T, Sense>(point, lub)) {
@@ -157,6 +161,8 @@ public:
    */
   [[nodiscard]] std::optional<LocalBound<T>>
   find_containing_bound(const std::vector<T> &point) const {
+    detail::validate_coordinates(point, dimensions_);
+    if (!detail::in_interval<T, Sense>(point, reference_point_, anti_reference_)) return std::nullopt;
     auto all_lubs = tree_.GetAllBounds();
     for (size_t i = 0; i < all_lubs.size(); ++i) {
       if (strictly_dominates<T, Sense>(point, all_lubs[i])) {
@@ -169,7 +175,8 @@ public:
 private:
   std::size_t dimensions_;
   LBTree<T, Sense> tree_;
-  std::size_t next_bound_id_;
+  std::vector<T> reference_point_;
+  std::vector<T> anti_reference_;
 
   /**
    * @brief Shared implementation for update_re and update_re_enhanced.
@@ -177,7 +184,8 @@ private:
    * Both algorithms share the same tree-based implementation since the
    * LBTree handles the spatial indexing uniformly.
    */
-  bool update_re_impl(const Point<T> &point, bool /* enhanced */) {
+  bool update_re_impl(const Point<T> &point) {
+    detail::validate_update<T, Sense>(point.coordinates, reference_point_, anti_reference_);
     const auto &z = point.coordinates;
     std::vector<std::vector<T>> A = tree_.ExtractStrictlyDominated(z);
 

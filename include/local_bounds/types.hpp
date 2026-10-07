@@ -17,6 +17,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <stdexcept>
 
 namespace local_bounds {
 
@@ -135,6 +136,8 @@ struct LocalBound {
       const std::vector<T>& reference_point,
       const std::vector<T>& anti_reference) {
     const std::size_t p = reference_point.size();
+    if (p == 0 || anti_reference.size() != p)
+      throw std::invalid_argument("Reference and anti-reference must have matching nonzero dimensions");
     std::vector<Point<T>> dummies;
     dummies.reserve(p);
     for (std::size_t j = 0; j < p; ++j) {

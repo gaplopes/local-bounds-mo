@@ -46,10 +46,15 @@ public:
   LBTree(size_t max_leaf_size, size_t num_children, size_t num_objectives)
       : max_leaf_size_(max_leaf_size), num_children_(num_children),
         p_(num_objectives) {
+    if (p_ == 0 || max_leaf_size_ == 0 || num_children_ < 2)
+      throw std::invalid_argument("Tree requires nonzero dimensions/leaf size and at least two children");
     root_ = allocate_node();
   }
 
-  ~LBTree() {}
+  LBTree(const LBTree&) = delete;
+  LBTree& operator=(const LBTree&) = delete;
+  LBTree(LBTree&&) = delete;
+  LBTree& operator=(LBTree&&) = delete;
 
   /**
    * @brief Extracts and removes all bounds strictly dominated by the given point.
@@ -58,6 +63,7 @@ public:
    * @return A vector of bounds that were strictly dominated and removed.
    */
   std::vector<Point> ExtractStrictlyDominated(const Point &z_bar) {
+    detail::validate_coordinates(z_bar, p_);
     std::vector<Point> strictly_dominated;
     if (!root_)
       return strictly_dominated;
@@ -83,6 +89,8 @@ public:
    */
   void FindBoundsWithEqualComponent(const Point &z, size_t j,
                                     std::vector<Point> &out) const {
+    detail::validate_coordinates(z, p_);
+    if (j >= p_) throw std::out_of_range("Component index exceeds dimensions");
     if (root_)
       FindBoundsWithEqualComponentRecursive(root_, z, j, out);
   }
@@ -93,10 +101,10 @@ public:
    * @param u_new The coordinates of the new bound.
    */
   void Insert(const Point &u_new) {
+    detail::validate_coordinates(u_new, p_);
     if (!root_)
       root_ = allocate_node();
-    InsertRecursive(root_, u_new);
-    item_count_++;
+    if (InsertRecursive(root_, u_new)) item_count_++;
   }
 
   /**
@@ -259,37 +267,24 @@ private:
    * @param n The current node being inspected.
    * @param u_new The new bound coordinate to insert.
    */
-  void InsertRecursive(Node *n, const Point &u_new) {
+  bool InsertRecursive(Node *n, const Point &u_new) {
     if (n->is_leaf()) {
-      // Ignore if it's already entirely covered by an existing bound
-      for (const auto &u_existing : n->L) {
-        if (covers_bound(u_existing, u_new))
-          return;
-      }
+      for (const auto &existing : n->L)
+        if (covers_bound(existing, u_new)) return false;
       n->L.push_back(u_new);
       UpdateBestWorst(n, u_new);
-      if (n->L.size() > max_leaf_size_)
-        Split(n);
-    } else {
-      // Find the child with the minimal expected distance metric to the new point
-      T min_dist = std::numeric_limits<T>::max();
-      Node *closest_child = nullptr;
-      for (auto *child : n->children) {
-        double d = expected_distance(u_new, child);
-        if (d < min_dist) {
-          min_dist = static_cast<T>(d);
-          closest_child = child;
-        }
-      }
-      UpdateBestWorst(n, u_new);
-      if (closest_child) {
-        InsertRecursive(closest_child, u_new);
-      } else {
-        // Fallback if no valid children (unexpected case)
-        n->L.push_back(u_new);
-        n->children.clear();
-      }
+      if (n->L.size() > max_leaf_size_) Split(n);
+      return true;
     }
+    long double min_dist = std::numeric_limits<long double>::infinity();
+    Node *closest = nullptr;
+    for (auto *child : n->children) {
+      const auto d = expected_distance(u_new, child);
+      if (!closest || d < min_dist) { min_dist = d; closest = child; }
+    }
+    if (!InsertRecursive(closest, u_new)) return false;
+    UpdateBestWorst(n, u_new);
+    return true;
   }
 
   /**
@@ -335,14 +330,14 @@ private:
       return;
 
     size_t z_idx = 0;
-    double max_avg_dist = -1.0;
+    long double max_avg_dist = -1.0;
     for (size_t i = 0; i < n->L.size(); ++i) {
-      double dist_sum = 0.0;
+      long double dist_sum = 0.0;
       for (size_t j = 0; j < n->L.size(); ++j) {
         if (i != j)
           dist_sum += distance(n->L[i], n->L[j]);
       }
-      double avg_dist = dist_sum / (n->L.size() - 1);
+      long double avg_dist = dist_sum / (n->L.size() - 1);
       if (avg_dist > max_avg_dist) {
         max_avg_dist = avg_dist;
         z_idx = i;
@@ -365,11 +360,11 @@ private:
 
     size_t target_children = std::min(num_children_, n->L.size() + 1);
     while (new_children.size() < target_children) {
-      double best_avg_dist = -1.0;
+      long double best_avg_dist = -1.0;
       size_t best_z_idx = 0;
 
       for (size_t i = 0; i < n->L.size(); ++i) {
-        double dist_sum = 0.0;
+        long double dist_sum = 0.0;
         size_t child_points = 0;
         for (auto *child : new_children) {
           for (const auto &cp : child->L) {
@@ -377,7 +372,7 @@ private:
             child_points++;
           }
         }
-        double avg_dist = (child_points > 0) ? (dist_sum / child_points) : 0.0;
+        long double avg_dist = (child_points > 0) ? (dist_sum / child_points) : 0.0;
         if (avg_dist > best_avg_dist) {
           best_avg_dist = avg_dist;
           best_z_idx = i;
@@ -400,11 +395,11 @@ private:
       Point p_pt = std::move(n->L.back());
       n->L.pop_back();
 
-      double min_d = std::numeric_limits<double>::max();
+      long double min_d = std::numeric_limits<long double>::infinity();
       Node *closest = nullptr;
       for (auto *child : new_children) {
-        double d = expected_distance(p_pt, child);
-        if (d < min_d) {
+        long double d = expected_distance(p_pt, child);
+        if (!closest || d < min_d) {
           min_d = d;
           closest = child;
         }
@@ -521,11 +516,11 @@ private:
    * @param b Second bound.
    * @return Euclidian distance.
    */
-  double distance(const Point &a, const Point &b) const {
-    double dist = 0.0;
+  long double distance(const Point &a, const Point &b) const {
+    long double dist = 0;
     for (size_t i = 0; i < p_; ++i)
-      dist += static_cast<double>((a[i] - b[i]) * (a[i] - b[i]));
-    return std::sqrt(dist);
+      dist = std::hypot(dist, static_cast<long double>(a[i]) - static_cast<long double>(b[i]));
+    return dist;
   }
 
   /**
@@ -534,16 +529,14 @@ private:
    * @param node Evaluator node candidate.
    * @return Numeric estimate representation of bounding box center distance.
    */
-  double expected_distance(const Point &a, const Node *node) const {
-    double dist = 0.0;
+  long double expected_distance(const Point &a, const Node *node) const {
+    long double dist = 0;
     for (size_t i = 0; i < p_; ++i) {
-      double mid_i = static_cast<double>(node->best_point[i] +
-                                         node->worst_point[i]) /
-                     2.0;
-      double diff = static_cast<double>(a[i]) - mid_i;
-      dist += diff * diff;
+      const auto midpoint = static_cast<long double>(node->best_point[i]) / 2 +
+                            static_cast<long double>(node->worst_point[i]) / 2;
+      dist = std::hypot(dist, static_cast<long double>(a[i]) - midpoint);
     }
-    return std::sqrt(dist);
+    return dist;
   }
 
   /**

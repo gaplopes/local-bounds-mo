@@ -53,12 +53,7 @@ class NeighborhoodBoundSet {
       : dimensions_(reference_point.size()),
         reference_point_(reference_point),
         anti_reference_(anti_reference) {
-    if (reference_point.empty()) {
-      throw std::invalid_argument("Reference point must have at least one dimension");
-    }
-    if (anti_reference.size() != reference_point.size()) {
-      throw std::invalid_argument("Anti-reference must have same dimensions as reference");
-    }
+    detail::validate_interval<T, Sense>(reference_point, anti_reference);
     allocate_node(LocalBound<T>::initial(reference_point_, anti_reference_, "u0"));
   }
 
@@ -72,9 +67,7 @@ class NeighborhoodBoundSet {
    * dominate any local bound.
    */
   bool update(const Point<T>& z_bar) {
-    if (z_bar.dimensions() != dimensions_) {
-      throw std::invalid_argument("Point dimensions must match bound set dimensions");
-    }
+    detail::validate_update<T, Sense>(z_bar.coordinates, reference_point_, anti_reference_);
 
     // 1. Find an initial bound u_bar such that z_bar < u_bar
     std::size_t u_bar_idx = npos;
@@ -241,9 +234,9 @@ class NeighborhoodBoundSet {
    * @brief Returns only nonredundant local bounds (excludes quasi-nonredundant ones).
    *
    * In the General Case position, Algorithm 1 maintains quasi-nonredundant
-   * bounds to preserve neighborhood connectivity (see paper, Section 4.3). A bound u
-   * is quasi-nonredundant if one of its i-neighbors weakly dominates it, meaning its
-   * search zone is contained within the neighbor's search zone.
+   * bounds to preserve neighborhood connectivity (see paper, Section 4.3).
+   * Export filtering checks containment against every active search zone and
+   * retains one representative for equal-coordinate zones.
    *
    * This method filters those out, returning only bounds with genuinely distinct
    * search zones — matching the output of Algorithms 2/3/5.
@@ -292,9 +285,8 @@ class NeighborhoodBoundSet {
    * @brief Checks if a point is in the search region.
    */
   [[nodiscard]] bool is_in_search_region(const std::vector<T>& point) const {
-    if (point.size() != dimensions_) {
-      throw std::invalid_argument("Point dimensions must match bound set dimensions");
-    }
+    detail::validate_coordinates(point, dimensions_);
+    if (!detail::in_interval<T, Sense>(point, reference_point_, anti_reference_)) return false;
     for (const auto& node : nodes_) {
       if (node.is_active && strictly_dominates<T, Sense>(point, node.bound.coordinates)) {
         return true;
@@ -308,6 +300,8 @@ class NeighborhoodBoundSet {
    */
   [[nodiscard]] std::optional<LocalBound<T>> find_containing_bound(
       const std::vector<T>& point) const {
+    detail::validate_coordinates(point, dimensions_);
+    if (!detail::in_interval<T, Sense>(point, reference_point_, anti_reference_)) return std::nullopt;
     for (const auto& node : nodes_) {
       if (node.is_active && strictly_dominates<T, Sense>(point, node.bound.coordinates)) {
         return node.bound;
@@ -338,6 +332,7 @@ class NeighborhoodBoundSet {
    * Elements with value `npos` indicate no neighbor on that component axis.
    */
   [[nodiscard]] const std::vector<std::size_t>& get_neighbors(std::size_t node_idx) const {
+    if (!is_active(node_idx)) throw std::out_of_range("Node must be active");
     return nodes_[node_idx].neighbors;
   }
 
@@ -352,6 +347,7 @@ class NeighborhoodBoundSet {
    * @return std::vector<std::size_t> A list of valid, non-redundant neighbor indices.
    */
   [[nodiscard]] std::vector<std::size_t> get_clean_neighbors(std::size_t node_idx) const {
+    if (!is_active(node_idx)) throw std::out_of_range("Node must be active");
     std::vector<std::size_t> clean_neighbors;
     std::vector<std::size_t> to_visit;
     std::vector<bool> visited(nodes_.size(), false);
@@ -384,6 +380,7 @@ class NeighborhoodBoundSet {
     std::vector<LocalBound<T>> nodes;
     std::vector<std::vector<std::size_t>> adjacency_list;
     std::vector<std::vector<std::size_t>> k_neighbors;
+    std::vector<bool> quasi;
   };
 
   /**
@@ -392,16 +389,21 @@ class NeighborhoodBoundSet {
    * This completely abstracts away internal inactive nodes and quasi-nonredundant 
    * bridges. The returned graph has contiguous indices from 0 to N-1, where N is 
    * the number of valid non-redundant local bounds.
+   * With include_quasi=true, retains every active node and its original component
+   * links; quasi flags identify redundant search zones without contracting them.
    */
-  [[nodiscard]] AdjacencyGraph get_adjacency_graph() const {
+  [[nodiscard]] AdjacencyGraph get_adjacency_graph(bool include_quasi = false) const {
     AdjacencyGraph graph;
     std::vector<std::size_t> internal_to_dense(nodes_.size(), npos);
     
     // 1. Assign dense IDs to valid non-redundant nodes
     for (std::size_t i = 0; i < nodes_.size(); ++i) {
-      if (nodes_[i].is_active && !is_quasi_nonredundant(i)) {
+      if (!nodes_[i].is_active) continue;
+      const bool quasi = is_quasi_nonredundant(i);
+      if (include_quasi || !quasi) {
         internal_to_dense[i] = graph.nodes.size();
         graph.nodes.push_back(nodes_[i].bound);
+        graph.quasi.push_back(quasi);
       }
     }
     
@@ -412,11 +414,12 @@ class NeighborhoodBoundSet {
     for (std::size_t i = 0; i < nodes_.size(); ++i) {
       if (internal_to_dense[i] != npos) {
         std::size_t dense_u = internal_to_dense[i];
-        std::vector<std::size_t> clean_internal = get_clean_neighbors(i);
+        std::vector<std::size_t> clean_internal = include_quasi
+            ? nodes_[i].neighbors : get_clean_neighbors(i);
         std::vector<std::size_t> dense_neighbors;
         dense_neighbors.reserve(clean_internal.size());
         for (std::size_t internal_nb : clean_internal) {
-          if (internal_to_dense[internal_nb] != npos) {
+          if (internal_nb != npos && internal_to_dense[internal_nb] != npos) {
             dense_neighbors.push_back(internal_to_dense[internal_nb]);
           }
         }
@@ -424,10 +427,10 @@ class NeighborhoodBoundSet {
 
         for (std::size_t k = 0; k < dimensions_; ++k) {
           std::size_t raw_n = nodes_[i].neighbors[k];
-          while (raw_n != npos && is_quasi_nonredundant(raw_n)) {
-            std::size_t next_n = nodes_[raw_n].neighbors[k];
-            if (next_n == npos || next_n == raw_n) break;
-            raw_n = next_n;
+          std::size_t hops = 0;
+          while (!include_quasi && raw_n != npos && is_quasi_nonredundant(raw_n)) {
+            if (++hops > nodes_.size()) { raw_n = npos; break; }
+            raw_n = nodes_[raw_n].neighbors[k];
           }
           if (raw_n != npos && internal_to_dense[raw_n] != npos) {
             graph.k_neighbors[dense_u][k] = internal_to_dense[raw_n];
@@ -481,40 +484,20 @@ class NeighborhoodBoundSet {
   }
 
   /**
-   * @brief Checks whether a bound is quasi-nonredundant.
+   * @brief Tests global search-zone containment, retaining one equal-coordinate representative.
    *
-   * A bound u is quasi-nonredundant if its search zone C(u) is contained
-   * within the search zone of one of its i-neighbors: C(u) ⊆ C(ν_i(u)).
-   * 
-   * Example in the MINIMIZE case:
-   * For MINIMIZE: C(u) ⊆ C(ν_i(u)) iff u_j ≤ ν_i(u)_j for all j,
-   * i.e., u weakly dominates ν_i(u) in the optimization sense.
-   * This happens in the NGP case when z̄_i = ν_i(u)_i (equality in C2).
-   *
-   * Note:
-   * When two neighbors have identical coordinates (mutual weak domination),
-   * their search zones are identical. Only one should be marked redundant;
-   * we use the node index as a tiebreaker (higher index is flagged).
-   *
-   * This is an O(p²) check using only the neighborhood graph pointers.
+   * Raw quasi-bounds stay in the graph to preserve connectivity. Equal-coordinate
+   * aliases can hide a containing zone beyond the immediate neighbors, so exports
+   * must compare against every active bound.
    */
   bool is_quasi_nonredundant(std::size_t idx) const {
-    const auto& u = nodes_[idx];
-    for (std::size_t i = 0; i < dimensions_; ++i) {
-      std::size_t nb_idx = u.neighbors[i];
-      if (nb_idx == npos || !nodes_[nb_idx].is_active) continue;
-      if (weakly_dominates<T, Sense>(u.bound.coordinates,
-                                     nodes_[nb_idx].bound.coordinates)) {
-        // Check if the relation is mutual (identical search zones)
-        if (weakly_dominates<T, Sense>(nodes_[nb_idx].bound.coordinates,
-                                       u.bound.coordinates)) {
-          // Both have identical search zones — only flag the higher-indexed one
-          if (idx > nb_idx) return true;
-        } else {
-          // Strict containment: C(u) ⊊ C(ν_i(u)) — u is genuinely redundant
-          return true;
-        }
-      }
+    const auto& coordinates = nodes_[idx].bound.coordinates;
+    // ponytail: quadratic export filtering; optimize duplicate-component traversal when needed.
+    for (std::size_t other = 0; other < nodes_.size(); ++other) {
+      if (other == idx || !nodes_[other].is_active) continue;
+      const auto& candidate = nodes_[other].bound.coordinates;
+      if (weakly_dominates<T, Sense>(coordinates, candidate) &&
+          (coordinates != candidate || other < idx)) return true;
     }
     return false;
   }

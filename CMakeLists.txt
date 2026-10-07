@@ -45,6 +45,10 @@ if(BUILD_TESTS)
     target_link_libraries(test_bound_set PRIVATE local_bounds)
     add_test(NAME test_bound_set COMMAND test_bound_set)
 
+    add_executable(test_regressions tests/test_regressions.cpp)
+    target_link_libraries(test_regressions PRIVATE local_bounds)
+    add_test(NAME test_regressions COMMAND test_regressions)
+
     add_executable(test_neighborhood_bound_set tests/test_neighborhood_bound_set.cpp)
     target_link_libraries(test_neighborhood_bound_set PRIVATE local_bounds)
     add_test(NAME test_neighborhood_bound_set COMMAND test_neighborhood_bound_set)

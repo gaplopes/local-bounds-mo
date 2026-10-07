@@ -27,7 +27,9 @@ public:
    *
    * @param p The number of objectives (dimensions) for each point.
    */
-  explicit LinearList(size_t p) : p_(p) {}
+  explicit LinearList(size_t p) : p_(p) {
+    if (p == 0) throw std::invalid_argument("Dimensions must be nonzero");
+  }
 
   /**
    * @brief Updates the linear list with a new candidate point `y`.
@@ -46,6 +48,7 @@ public:
    * rejected.
    */
   bool Update(const Point &y, std::vector<Point> *pruned = nullptr) {
+    detail::validate_coordinates(y, p_);
     // check if y is covered (weakly dominated by an existing point)
     for (const auto &p : archive_) {
       if (weakly_dominates<T, Sense>(p, y))

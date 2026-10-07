@@ -10,8 +10,17 @@ from ._core import (
     BoundSetTreeMaximize
 )
 
+def _normalize_sense(sense):
+    if isinstance(sense, str) and sense in ("MINIMIZE", "MAXIMIZE"):
+        sense = getattr(Objective, sense)
+    if sense not in (Objective.MINIMIZE, Objective.MAXIMIZE):
+        raise ValueError("Sense must be MINIMIZE or MAXIMIZE")
+    return sense
+
+
 class BoundSet:
     def __init__(self, reference_point, anti_reference=None, sense=Objective.MINIMIZE):
+        sense = _normalize_sense(sense)
         self.sense = sense
         if sense == Objective.MINIMIZE:
             if anti_reference is not None:
@@ -39,6 +48,7 @@ class BoundSet:
 
 class NeighborhoodBoundSet:
     def __init__(self, reference_point, anti_reference, sense=Objective.MINIMIZE):
+        sense = _normalize_sense(sense)
         self.sense = sense
         if sense == Objective.MINIMIZE:
             self._impl = NeighborhoodBoundSetMinimize(reference_point, anti_reference)
@@ -53,10 +63,11 @@ class NeighborhoodBoundSet:
     def find_containing_bound(self, point): return self._impl.find_containing_bound(point)
     def bounds(self): return self._impl.bounds()
     def nonredundant_bounds(self): return self._impl.nonredundant_bounds()
-    def get_adjacency_graph(self): return self._impl.get_adjacency_graph()
+    def get_adjacency_graph(self, include_quasi=False): return self._impl.get_adjacency_graph(include_quasi)
 
 class BoundSetTree:
     def __init__(self, reference_point, anti_reference=None, max_leaf_size=32, num_children=8, sense=Objective.MINIMIZE):
+        sense = _normalize_sense(sense)
         self.sense = sense
         if sense == Objective.MINIMIZE:
             if anti_reference is not None:
