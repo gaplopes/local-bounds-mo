@@ -77,8 +77,8 @@ std::vector<Point<int64_t>> generate_stable_set(
     // Check if dominated by or dominates any existing point
     bool is_valid = true;
     for (const auto& existing : points) {
-      if (dominates<int64_t, Sense>(existing.coordinates, coords) ||
-          dominates<int64_t, Sense>(coords, existing.coordinates)) {
+      if (weakly_dominates<int64_t, Sense>(existing.coordinates, coords) ||
+          weakly_dominates<int64_t, Sense>(coords, existing.coordinates)) {
         is_valid = false;
         break;
       }
@@ -118,6 +118,7 @@ struct BenchmarkResult {
   std::size_t final_bounds;
   double time_ms;
   double avg_A;
+  std::vector<std::vector<int64_t>> coordinates;
 };
 
 std::vector<std::vector<int64_t>> canonicalize_bounds(
@@ -302,10 +303,14 @@ BenchmarkResult run_benchmark(
   double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
 
   std::size_t final_bounds = 0;
+  std::vector<std::vector<int64_t>> coordinates;
   if constexpr (std::is_same_v<BoundSetType, NeighborhoodBoundSet<int64_t, Sense>>) {
-    final_bounds = bounds.nonredundant_size();
+    auto exported = bounds.nonredundant_bounds();
+    final_bounds = exported.size();
+    coordinates = canonicalize_bounds(exported);
   } else {
     final_bounds = bounds.size();
+    coordinates = canonicalize_bounds(bounds.bounds());
   }
 
   return {
@@ -316,7 +321,8 @@ BenchmarkResult run_benchmark(
       points.size(),
       final_bounds,
       time_ms,
-      points.empty() ? 0 : total_A / points.size()};
+      points.empty() ? 0 : total_A / points.size(),
+      std::move(coordinates)};
 }
 
 void print_header(std::ostream& out) {
@@ -395,9 +401,9 @@ void run_benchmarks(
           "Algorithm 2 (LBTree)", sense_str, inst_str, points, dims, ref_val, anti_ref_val);
       print_result(out, alg2_tree);
 
-      // Algorithm 3 (LBTree): Tree-accelerated Enhanced RE
+      // API alias: the tree exposes one RE implementation.
       auto alg3_tree = run_benchmark<Sense, BoundSetTree<int64_t, Sense>, &BoundSetTree<int64_t, Sense>::update_re_enhanced>(
-          "Algorithm 3 (LBTree)", sense_str, inst_str, points, dims, ref_val, anti_ref_val);
+          "LBTree RE alias", sense_str, inst_str, points, dims, ref_val, anti_ref_val);
       print_result(out, alg3_tree);
 
       // Algorithm 4: Redundancy Avoidance (General Position only)
@@ -418,61 +424,17 @@ void run_benchmarks(
           "Naive", sense_str, inst_str, points, dims, ref_val, anti_ref_val);
       print_result(out, naive);
 
-      // Iteration-by-iteration comparison to identify exact differences.
-      // To keep runtime practical, limit detailed checks to a subset.
-
-      if (naive.final_bounds != alg2.final_bounds) {
-        out << "  [WARNING] Final bound counts differ between Naive and Algorithm 2\n";
-        const std::size_t comparison_limit = std::max(naive.final_bounds, alg2.final_bounds);
-        out << "  Iterative set comparison (first " << comparison_limit << " points):\n";
-        compare_iteration_by_iteration<
-            Sense,
-            &BoundSet<int64_t, Sense>::update_naive,
-            &BoundSet<int64_t, Sense>::update_re>(
-            out, "Naive", "Algorithm 2", points, dims, ref_val, anti_ref_val, comparison_limit);
-      }
-      if (alg2.final_bounds != alg1.final_bounds) {
-        if (instance_type == InstanceType::GENERAL_CASE) {
-          out << "  [NOTE] |U(N)| differs: Algorithm 1 keeps quasi-nonredundant bounds"
-              << " to preserve neighborhood connectivity (expected in NGP, see Section 4.3)\n";
-        } else {
-          out << "  [WARNING] Final bound counts differ between Algorithm 2 and Algorithm 1 (NBHD)\n";
+      for (const auto* result : {&alg1, &alg2, &alg3, &alg2_tree, &alg3_tree, &alg5}) {
+        if (result->coordinates != naive.coordinates || result->final_bounds != result->coordinates.size()) {
+          print_bound_set_delta(out, naive.coordinates, result->coordinates, "Naive", result->algorithm);
+          out.flush();
+          throw std::runtime_error("Benchmark correctness failure: " + result->algorithm);
         }
       }
-      if (alg2.final_bounds != alg3.final_bounds) {
-        out << "  [WARNING] Final bound counts differ between Algorithm 2 and Algorithm 3\n";
-        const std::size_t comparison_limit = std::max(alg2.final_bounds, alg3.final_bounds);
-        out << "  Iterative set comparison (first " << comparison_limit << " points):\n";
-        compare_iteration_by_iteration<
-            Sense,
-            &BoundSet<int64_t, Sense>::update_re,
-            &BoundSet<int64_t, Sense>::update_re_enhanced>(
-            out, "Algorithm 2", "Algorithm 3", points, dims, ref_val, anti_ref_val, comparison_limit);
-      }
-      if (instance_type == InstanceType::GENERAL_POSITION) {
-        if (alg2.final_bounds != alg4.final_bounds) {
-          out << "  [WARNING] Final bound counts differ between Algorithm 2 and Algorithm 4\n";
-          const std::size_t comparison_limit = std::max(alg2.final_bounds, alg4.final_bounds);
-          out << "  Iterative set comparison (first " << comparison_limit << " points):\n";
-          compare_iteration_by_iteration<
-              Sense,
-              &BoundSet<int64_t, Sense>::update_re,
-              &BoundSet<int64_t, Sense>::update_ra_sa>(
-              out, "Algorithm 2", "Algorithm 4", points, dims, ref_val, anti_ref_val, comparison_limit);
-        }
-      }
-      if (alg2.final_bounds != alg5.final_bounds) {
-        out << "  [WARNING] Final bound counts differ between Algorithm 2 and Algorithm 5\n";
-        const std::size_t comparison_limit = std::max(alg2.final_bounds, alg5.final_bounds);
-        out << "  Iterative set comparison (first " << comparison_limit << " points):\n";
-        compare_iteration_by_iteration<
-            Sense,
-            &BoundSet<int64_t, Sense>::update_re,
-            &BoundSet<int64_t, Sense>::update_ra>(
-            out, "Algorithm 2", "Algorithm 5", points, dims, ref_val, anti_ref_val, comparison_limit);
-      }
-      if (alg2.final_bounds != alg2_tree.final_bounds) {
-        out << "  [WARNING] Final bound counts differ between Algorithm 2 and Algorithm 2 (LBTree)\n";
+      if (instance_type == InstanceType::GENERAL_POSITION && alg4.coordinates != naive.coordinates) {
+        print_bound_set_delta(out, naive.coordinates, alg4.coordinates, "Naive", alg4.algorithm);
+        out.flush();
+        throw std::runtime_error("Benchmark correctness failure: " + alg4.algorithm);
       }
     }
   }
@@ -506,7 +468,7 @@ void run_benchmarks_compare_all(
   }
 }
 
-int main(int /*argc*/, char* /*argv*/[]) {
+int main(int /*argc*/, char* /*argv*/[]) try {
   // Open results file
   std::ofstream results_file("benchmark_results.txt");
   if (!results_file) {
@@ -562,4 +524,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
   out << "=============================================\n";
 
   return 0;
+} catch (const std::exception& error) {
+  std::cerr << error.what() << "\n";
+  return 1;
 }
