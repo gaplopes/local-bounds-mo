@@ -13,7 +13,7 @@ Based on two papers:
 - **Paper 1:** *"On the representation of the search region in multiobjective optimization"* by Klamroth, Lacour, and Vanderpooten (EJOR, 2015). [DOI: 10.1016/j.ejor.2015.03.031](http://dx.doi.org/10.1016/j.ejor.2015.03.031)
 - **Paper 2:** *"Efficient computation of the search region in multi-objective optimization"* by Dächert, Klamroth, Lacour, and Vanderpooten (EJOR, 2017). [DOI: 10.1016/j.ejor.2016.05.029](http://dx.doi.org/10.1016/j.ejor.2016.05.029)
 
-This library is an **independent C++ reimplementation** of the algorithms described in both papers. The original papers do not provide source code. Tests cover worked examples, safety regressions, and an independent coordinate oracle on seeded stable sets in dimensions 2–6, with ties and both optimization senses.
+This library is an **independent C++ reimplementation** of the algorithms described in both papers. The original papers do not provide source code. Tests cover worked examples, input requirements, tree/list invariants, visualization/API errors, and ordered-output regressions with ties and both optimization senses.
 
 ## Features
 
@@ -44,7 +44,7 @@ This library is an **independent C++ reimplementation** of the algorithms descri
 
 **Algorithm 1** (Paper 2) traverses the affected region through a neighborhood graph. The paper's O(|U_z̄|) bound assumes a containing bound is supplied. This implementation first scans allocated node storage and initializes a visitation array over that storage. For fixed p, an update therefore has O(C + |U_z̄|) overhead, where C is the allocated node capacity (including inactive slots).
 
-`nonredundant_bounds()` and `nonredundant_size()` check global containment to handle tied-coordinate aliases correctly. These exports take O(p·C²) in the worst case. `get_adjacency_graph()` contracts redundant nodes and repeats containment checks during traversal, so its cost can be higher. Exports occur outside the benchmark's timed update section. Optimizing these paths is deferred.
+`nonredundant_bounds()` and `nonredundant_size()` check global containment to handle tied-coordinate aliases correctly. These exports take O(p·C²) in the worst case. `get_adjacency_graph()` classifies each active node once per export and reuses the results while contracting redundant nodes. Its cost also includes graph traversal and materializing the complete adjacency, which can be dense. Exports occur outside the benchmark's timed update section.
 
 Where:
 - |U(N)| is the total number of local bounds
@@ -460,13 +460,13 @@ To run the visualization dashboard or generate reports, make sure your virtual e
 # 1. Activate your virtual environment
 source venv/bin/activate
 
-# 2. Install visualization dependencies (Flask, Plotly, NetworkX)
-pip install ".[vis]"
-# Or via requirements file:
-pip install -r visualization/requirements.txt
-# Or directly:
-pip install flask plotly networkx
+# 2. Install the current library and visualization dependencies
+python -m pip install -e ".[vis]"
 ```
+
+For development, the editable install loads the Python wrapper from this checkout. Rerun the install command after changing C++ headers or bindings to rebuild the native extension. Running the dashboard from the checkout with an older installed library can otherwise produce missing attributes or incompatible graph-export arguments.
+
+`visualization/requirements.txt` installs only visualization dependencies (Flask, Plotly, NetworkX, and NumPy); it does not install or rebuild the library.
 
 ### Interactive Web Dashboard
 
@@ -478,14 +478,18 @@ python -m visualization.app --port 8050
 
 Open `http://127.0.0.1:8050` in your browser. Features include:
 - **In-Place Problem Configuration**: Directly switch between 2D and 3D, toggle Minimization ($U(N)$) vs Maximization ($L(N)$), and customize Lower Bound ($LB$) and Upper Bound ($UB$) search spaces without intrusive popups.
+- **Custom Instances**: Click **New custom instance** beside the dimension selector to start empty with the displayed dimension, sense, and interval bounds, then enter points. Applying settings or loading a preset starts a new problem and resets the views.
 - **Strict Point Validation**: Automatically checks for dimension matching, finite coordinates, search space containment $[LB, UB]$, duplicate points, and Pareto dominance violations (points dominated by $N$ or dominating existing points in $N$) with clean, non-intrusive inline error banners.
 - **Generation Timeline Slider**: Step forward and backward through point insertions, tracking destroyed, created, and persistent bounds.
 - **3D & 2D Spatial Views**:
-  - 3D view: Solid, uniquely color-coded Pareto dominance cones $D(z) = [z, M]$ (matching Fig. 2 in Klamroth et al. 2015), opposite-axis camera perspective (looking from Ideal $m$ towards Nadir $M$), real-time interactive opacity slider, and single unified legend entry for one-click toggling.
+  - 3D view: Translucent (30% opacity by default), uniquely color-coded Pareto dominance cones $D(z) = [z, M]$ (matching Fig. 2 in Klamroth et al. 2015), opposite-axis camera perspective (looking from Ideal $m$ towards Nadir $M$), real-time interactive opacity slider, and single unified legend entry for one-click toggling.
   - Centered Pairwise 2D Projections: Centered matrix of projections $(f_1, f_2)$, $(f_1, f_3)$, $(f_2, f_3)$ showing bounding boxes.
   - 2D view: 2D search rectangles and staircase Pareto front.
+- **View Controls**: Camera, zoom, and surviving graph node positions persist while stepping or highlighting. Spatial and pairwise views retain their own zoom. Use **Wireframe** to remove filled 3D faces and **Labels** to show all labels by default or hide them. Labels use white boxes with dark 12 px text; the reference labels are **m** and **M**. Coincident pairwise markers are grouped; clicking a bound group offers each underlying bound for selection.
 - **Neighbor Graph Visualization**: Choose contracted adjacency or the raw Algorithm 1 graph, retaining quasi-bounds as labeled ellipses. Both views show total, quasi, and nonredundant counts and support component arrows or undirected edges. `get_adjacency_graph(include_quasi=True)` exports the raw topology and per-node `quasi` flags.
 - **Membership Probe**: Check a point at the selected step without inserting it. The dashboard identifies and highlights a nonredundant containing bound and displays exact search-zone inequalities, including the strict reference-side boundary.
+
+The dashboard computes history from bound IDs without building unused graph snapshots. It retains up to eight step snapshots and eight serialized figures, keyed by problem settings, ordered point IDs/coordinates, and view options; every API mutation clears these caches. Public step data is copied to keep snapshots independent. The CLI constructs only the final state unless `--step-by-step` is requested.
 
 CLI HTML reports embed Plotly and work offline. The interactive dashboard serves Plotly locally but currently requires internet access for Tailwind, Lucide, and Vis-Network CDN assets; bundling those dashboard dependencies remains a deployment enhancement.
 - **Local Bounds Table**: Displays coordinates $u$, defining points $z^j(u)$ (e.g. $z^1, z^2, z^3$), and neighbor pointers $\nu_k(u)$, with cross-highlighting across scenes and graphs.
