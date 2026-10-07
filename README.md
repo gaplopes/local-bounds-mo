@@ -13,7 +13,7 @@ Based on two papers:
 - **Paper 1:** *"On the representation of the search region in multiobjective optimization"* by Klamroth, Lacour, and Vanderpooten (EJOR, 2015). [DOI: 10.1016/j.ejor.2015.03.031](http://dx.doi.org/10.1016/j.ejor.2015.03.031)
 - **Paper 2:** *"Efficient computation of the search region in multi-objective optimization"* by Dächert, Klamroth, Lacour, and Vanderpooten (EJOR, 2017). [DOI: 10.1016/j.ejor.2016.05.029](http://dx.doi.org/10.1016/j.ejor.2016.05.029)
 
-This library is an **independent C++ reimplementation** of the algorithms described in both papers. The original papers do not provide source code. Test cases are derived from worked examples and validated against the naive brute-force algorithm for correctness.
+This library is an **independent C++ reimplementation** of the algorithms described in both papers. The original papers do not provide source code. Tests cover worked examples, safety regressions, and an independent coordinate oracle on seeded stable sets in dimensions 2–6, with ties and both optimization senses.
 
 ## Features
 
@@ -28,7 +28,7 @@ This library is an **independent C++ reimplementation** of the algorithms descri
   - `update_ra_sa()`: Algorithm 4 - Redundancy Avoidance (RA) (General Position)
   - `update_ra()`: Algorithm 5 - Redundancy Avoidance (RA) (General Case)
 - **Neighborhood-based Algorithm from Paper 2** (via `NeighborhoodBoundSet`):
-  - `update()`: Algorithm 1 - Neighborhood-Based Update (Paper 2), O(|U_z̄|) per update
+  - `update()`: Algorithm 1 - Neighborhood-Based Update (Paper 2)
 
 ### Complexity
 
@@ -42,13 +42,9 @@ This library is an **independent C++ reimplementation** of the algorithms descri
 | Algorithm 4 (RA, GP) | `BoundSet` | O(\|A\|) | Prop. 5.2; no filtering needed |
 | Algorithm 5 (RA, general) | `BoundSet` | O(\|N\|·\|A\|) worst case | Due to Z^k(u) sets; in practice much smaller |
 
-**Algorithm 1** (Paper 2) takes a fundamentally different approach. Instead of scanning all bounds to find A, it uses a **neighborhood graph** to traverse only the affected region:
+**Algorithm 1** (Paper 2) traverses the affected region through a neighborhood graph. The paper's O(|U_z̄|) bound assumes a containing bound is supplied. This implementation first scans allocated node storage and initializes a visitation array over that storage. For fixed p, an update therefore has O(C + |U_z̄|) overhead, where C is the allocated node capacity (including inactive slots).
 
-| Algorithm | Class | Total complexity | Notes |
-|-----------|-------|------------------|-------|
-| Algorithm 1 (Neighborhood) | `NeighborhoodBoundSet` | **O(\|U_z̄\|)** | \|U_z̄\| = bounds created + destroyed per update; no scan of full \|U(N)\| |
-
-Algorithm 1's advantage is that \|U_z̄\| is typically much smaller than \|U(N)\|. In the worst case O(\|U_z̄\|) = O(\|U(N)\|), but this only occurs in pathological instances. In practice, the savings are substantial, especially for large \|U(N)\|.
+`nonredundant_bounds()` and `nonredundant_size()` check global containment to handle tied-coordinate aliases correctly. These exports take O(p·C²) in the worst case. `get_adjacency_graph()` contracts redundant nodes and repeats containment checks during traversal, so its cost can be higher. Exports occur outside the benchmark's timed update section. Optimizing these paths is deferred.
 
 Where:
 - |U(N)| is the total number of local bounds
@@ -59,14 +55,14 @@ Where:
 
 ### Which algorithm should I use?
 
-| Objectives (p) | Recommended algorithm | Rationale |
-|---|---|---|
-| Any p, large \|U(N)\| | `NeighborhoodBoundSet::update()` (Algorithm 1) | O(\|U_z̄\|) — does not scan the full bound set; fastest when \|U(N)\| is large |
-| p ≤ 5, moderate \|U(N)\| | `BoundSet::update_re_enhanced()` (Algorithm 3) | Better cache locality and smaller \|A\|, making the filtering step cheap |
-| p = 5 | Either Algorithm 1 or RE/RA | Performance is close; profile for your workload |
-| p ≥ 6, moderate \|U(N)\| | `BoundSet::update_ra_sa()` / `update_ra()` (Algorithms 4/5) | Avoids expensive filtering; advantage grows rapidly with p |
+Choose based on the required metadata, input assumptions, and measurements on your workload. The papers' timings do not establish a universal fastest implementation for this repository.
 
-**Algorithm 1** (`NeighborhoodBoundSet`) from Paper 2 is generally the fastest choice. Its O(|U_z̄|) complexity means it only touches the bounds affected by the new point, while all other algorithms must scan the entire set O(|U(N)|) to find affected bounds. The advantage grows with |U(N)|.
+| Requirement | Candidate |
+|---|---|
+| Neighborhood relationships | `NeighborhoodBoundSet` |
+| Simple bound coordinates, including ties | `BoundSet::update_re()` or `update_re_enhanced()` |
+| Defining sets, with ties | `BoundSet::update_ra()` |
+| Defining points and general position | `BoundSet::update_ra_sa()` |
 
 The crossover between Algorithms 2–5 is driven by **|A|** (the average number of search zones containing the new point), which grows rapidly with p. From Paper 1's experiments: ≈4 for p=3, ≈22 for p=4, ≈142 for p=5, ≈736 for p=6.
 
@@ -76,11 +72,19 @@ The crossover between Algorithms 2–5 is driven by **|A|** (the average number 
 
 > **Note:** Algorithm 1, 4, and 5 all require both reference and anti-reference points. See the Quick Start section below.
 
+### Input and ownership contracts
+
+All coordinates must be finite and have the configured nonzero dimension. Reference and anti-reference coordinates must form a strictly ordered interval. RE, naive, tree, and neighborhood updates accept the anti-reference boundary and exclude the reference boundary: `anti <= z < reference` for MINIMIZE, `reference < z <= anti` for MAXIMIZE. RA and RA-SA require strict interior points. Queries outside the configured interval return false/no bound; malformed coordinates raise an exception before mutation.
+
+The algorithms assume a stable input set. RA-SA additionally assumes that distinct points have distinct coordinates in every objective. Use a fresh `BoundSet` when switching to RA or RA-SA: RE/naive updates discard defining metadata, and the two RA variants maintain different metadata. Unsupported transitions throw `std::logic_error`. `update_auto()` falls back to RE if RA metadata or interior-point conditions are unavailable.
+
+`LBTree` and `BoundSetTree` are deliberately noncopyable and nonmovable: their arena pointers cannot be safely copied. `BoundSetTree::update_re_enhanced()`, `update_naive()`, and `update_auto()` are aliases of its single RE implementation, not separate implementations of Algorithms 3 or naive filtering.
+
 ## Quick Start
 
-### Algorithm 1 — NeighborhoodBoundSet (recommended)
+### Algorithm 1 — NeighborhoodBoundSet
 
-The fastest algorithm for most use cases. Uses a neighborhood graph for O(|U_z̄|) updates:
+Uses a neighborhood graph to traverse affected bounds after locating a containing bound:
 
 ```cpp
 #include "local_bounds.hpp"
@@ -212,7 +216,7 @@ local-bounds-mo/
 │   │   ├── types.hpp                 # Point<T>, LocalBound<T>, Objective enum
 │   │   ├── dominance.hpp             # Dominance relation functions
 │   │   ├── bound_set.hpp             # BoundSet<T, Sense> with Algorithms 2–5
-│   │   ├── bound_set_tree.hpp        # BoundSetTree<T, Sense> with Algorithms 2–3 accelerated by LBTree
+│   │   ├── bound_set_tree.hpp        # BoundSetTree<T, Sense>: indexed RE and API aliases
 │   │   └── neighborhood_bound_set.hpp # NeighborhoodBoundSet<T, Sense> (Algorithm 1)
 │   └── structures/
 │       ├── lb_tree.hpp               # LBTree (Local Bounds Tree)
@@ -325,7 +329,7 @@ class NeighborhoodBoundSet {
     NeighborhoodBoundSet(const std::vector<T>& reference_point,
                          const std::vector<T>& anti_reference);
     
-    void update(const Point<T>& point);                       // O(|U_z̄|) neighborhood-based update
+    bool update(const Point<T>& point);                       // Full-storage lookup + neighborhood traversal
     
     std::vector<LocalBound<T>> bounds() const;                // All bounds (incl. quasi-nonredundant)
     std::vector<LocalBound<T>> nonredundant_bounds() const;   // Excludes quasi-nonredundant
@@ -349,12 +353,12 @@ class BoundSet {
     BoundSet(const std::vector<T>& reference_point,
              const std::vector<T>& anti_reference);
     
-    void update_auto(const Point<T>& point);            // Auto-select best algorithm based on p
-    void update_naive(const Point<T>& point);           // Naive
-    void update_re(const Point<T>& point);              // Algorithm 2 (RE)
-    void update_re_enhanced(const Point<T>& point);     // Algorithm 3 (Enhanced RE)
-    void update_ra_sa(const Point<T>& point);           // Algorithm 4 (RA, General Position)
-    void update_ra(const Point<T>& point);              // Algorithm 5 (RA, General Case)
+    bool update_auto(const Point<T>& point);            // Auto-select best algorithm based on p
+    bool update_naive(const Point<T>& point);           // Naive
+    bool update_re(const Point<T>& point);              // Algorithm 2 (RE)
+    bool update_re_enhanced(const Point<T>& point);     // Algorithm 3 (Enhanced RE)
+    bool update_ra_sa(const Point<T>& point);           // Algorithm 4 (RA, General Position)
+    bool update_ra(const Point<T>& point);              // Algorithm 5 (RA, General Case)
     
     const std::vector<LocalBound<T>>& bounds() const;
     std::size_t size() const;
@@ -364,9 +368,9 @@ class BoundSet {
 };
 ```
 
-### BoundSetTree (Algorithms 2–3 — Accelerated by LBTree)
+### BoundSetTree (indexed RE)
 
-> **What is LBTree?** The `LBTree` (Local Bounds Tree) is a specialized spatial index based on R-tree geometries that recursively clusters points and provides fast multidimensional box pruning capabilities. It substantially accelerates Redundancy Elimination by reducing exhaustive bound inspections.
+> **What is LBTree?** The `LBTree` (Local Bounds Tree) is a spatial index that recursively clusters bounds and prunes multidimensional box queries. Its benefit over a linear scan depends on the workload; benchmark the intended dimensions and input distributions.
 
 ```cpp
 template <typename T = double, Objective Sense = Objective::MINIMIZE>
@@ -374,10 +378,10 @@ class BoundSetTree {
     // Requires reference point (and optionally anti-reference, max_leaf_size, num_children)
     BoundSetTree(const std::vector<T>& reference_point);
     
-    void update_auto(const Point<T>& point);            // Delegates to update_re_enhanced
-    void update_naive(const Point<T>& point);           // Delegates to update_re
-    void update_re(const Point<T>& point);              // Algorithm 2 (RE) accelerated by LBTree
-    void update_re_enhanced(const Point<T>& point);     // Algorithm 3 (Enhanced RE) accelerated by LBTree
+    bool update_auto(const Point<T>& point);            // Delegates to update_re_enhanced
+    bool update_naive(const Point<T>& point);           // Delegates to update_re
+    bool update_re(const Point<T>& point);              // Algorithm 2 (RE) accelerated by LBTree
+    bool update_re_enhanced(const Point<T>& point);     // Alias of tree RE
     
     std::vector<LocalBound<T>> bounds() const;
     std::size_t size() const;
@@ -426,7 +430,7 @@ class NeighborhoodBoundSet:
     def find_containing_bound(self, point: list[float]) -> LocalBound | None: ...
     def bounds(self) -> list[LocalBound]: ...
     def nonredundant_bounds(self) -> list[LocalBound]: ...
-    def get_adjacency_graph(self) -> AdjacencyGraph: ...
+    def get_adjacency_graph(self, include_quasi: bool = False) -> AdjacencyGraph: ...
 
 class BoundSetTree:
     def __init__(self, reference_point, anti_reference=None, max_leaf_size=32,
@@ -480,7 +484,10 @@ Open `http://127.0.0.1:8050` in your browser. Features include:
   - 3D view: Solid, uniquely color-coded Pareto dominance cones $D(z) = [z, M]$ (matching Fig. 2 in Klamroth et al. 2015), opposite-axis camera perspective (looking from Ideal $m$ towards Nadir $M$), real-time interactive opacity slider, and single unified legend entry for one-click toggling.
   - Centered Pairwise 2D Projections: Centered matrix of projections $(f_1, f_2)$, $(f_1, f_3)$, $(f_2, f_3)$ showing bounding boxes.
   - 2D view: 2D search rectangles and staircase Pareto front.
-- **Neighbor Graph Visualization**: Interactive physics network (Vis-Network) with generous spacing between nodes and edges, supporting both Combined Multi-Graph (with $\nu_k$ component arrows) and Undirected Graph $G$ (Paper 2 Fig. 3).
+- **Neighbor Graph Visualization**: Choose contracted adjacency or the raw Algorithm 1 graph, retaining quasi-bounds as labeled ellipses. Both views show total, quasi, and nonredundant counts and support component arrows or undirected edges. `get_adjacency_graph(include_quasi=True)` exports the raw topology and per-node `quasi` flags.
+- **Membership Probe**: Check a point at the selected step without inserting it. The dashboard identifies and highlights a nonredundant containing bound and displays exact search-zone inequalities, including the strict reference-side boundary.
+
+CLI HTML reports embed Plotly and work offline. The interactive dashboard serves Plotly locally but currently requires internet access for Tailwind, Lucide, and Vis-Network CDN assets; bundling those dashboard dependencies remains a deployment enhancement.
 - **Local Bounds Table**: Displays coordinates $u$, defining points $z^j(u)$ (e.g. $z^1, z^2, z^3$), and neighbor pointers $\nu_k(u)$, with cross-highlighting across scenes and graphs.
 - **Preset Library**: One-click presets for Paper 2 Example 2.8, Paper 1 Example 2 (SA), Paper 1 Example 3 (NGP Ties), 2D, and 3D Maximization.
 
