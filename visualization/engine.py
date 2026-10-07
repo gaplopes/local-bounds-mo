@@ -7,6 +7,7 @@ Based on:
 
 from __future__ import annotations
 import math
+from html import escape
 from typing import List, Dict, Any, Optional, Tuple, Union
 
 try:
@@ -47,13 +48,21 @@ def validate_point(
     Checks performed:
     1. Dimension match with expected problem dimension p.
     2. Coordinates are finite numeric values (no NaN, Inf).
-    3. Coordinates lie within search space [LB_i, UB_i].
+    3. Coordinates lie in the anti-inclusive, reference-exclusive interval.
     4. Unique point identifier (no duplicate ID).
     5. Unique coordinates (no duplicate in N).
     6. Pareto dominance checks:
        - Reject if dominated by an existing point in N.
        - Reject if it strictly dominates an existing point in N (violates N stability).
     """
+    sense = lb._normalize_sense(sense)
+    is_min = sense == lb.Objective.MINIMIZE
+    if (len(lower_bound) != len(upper_bound) or not lower_bound or
+            any(not math.isfinite(lo) or not math.isfinite(hi) or lo >= hi
+                for lo, hi in zip(lower_bound, upper_bound))):
+        raise PointValidationError("Bounds must define a finite, nonempty interval.", "INVALID_INTERVAL")
+    if not isinstance(point_id, str):
+        raise PointValidationError("Point ID must be a string.", "INVALID_ID")
     expected_dim = len(lower_bound)
     if len(coords) != expected_dim:
         raise PointValidationError(
@@ -62,14 +71,14 @@ def validate_point(
         )
 
     for i, c in enumerate(coords):
-        if not isinstance(c, (int, float)) or math.isnan(c) or math.isinf(c):
+        if isinstance(c, bool) or not isinstance(c, (int, float)) or not math.isfinite(c):
             raise PointValidationError(
                 f"Coordinate f_{i+1} = '{c}' is invalid: must be a finite real number.",
                 "NON_FINITE"
             )
-        if c < lower_bound[i] - 1e-7 or c > upper_bound[i] + 1e-7:
+        if not (lower_bound[i] <= c < upper_bound[i] if is_min else lower_bound[i] < c <= upper_bound[i]):
             raise PointValidationError(
-                f"Coordinate f_{i+1} = {c} is out of bounds; must be within [{lower_bound[i]}, {upper_bound[i]}].",
+                f"Coordinate f_{i+1} = {c} is out of bounds; must be within the anti-inclusive, reference-exclusive interval ({lower_bound[i]}, {upper_bound[i]}).",
                 "OUT_OF_BOUNDS"
             )
 
@@ -83,7 +92,7 @@ def validate_point(
 
     for p in existing_points:
         p_coords = list(p.coordinates)
-        if all(abs(c - pc) < 1e-7 for c, pc in zip(coords, p_coords)):
+        if coords == p_coords:
             raise PointValidationError(
                 f"Duplicate coordinates ({', '.join(f'{c:.2f}' for c in coords)}): matches existing point '{p.id}'.",
                 "DUPLICATE_COORDINATES"
@@ -96,12 +105,12 @@ def validate_point(
         p_coords = list(p.coordinates)
         if is_min:
             # For MINIMIZE: p dominates coords if p_coords <= coords and p_coords != coords
-            p_weakly_dominates_new = all(pc <= c + 1e-7 for pc, c in zip(p_coords, coords))
-            new_weakly_dominates_p = all(c <= pc + 1e-7 for c, pc in zip(coords, p_coords))
+            p_weakly_dominates_new = all(pc <= c for pc, c in zip(p_coords, coords))
+            new_weakly_dominates_p = all(c <= pc for c, pc in zip(coords, p_coords))
         else:
             # For MAXIMIZE: p dominates coords if p_coords >= coords and p_coords != coords
-            p_weakly_dominates_new = all(pc >= c - 1e-7 for pc, c in zip(p_coords, coords))
-            new_weakly_dominates_p = all(c >= pc - 1e-7 for c, pc in zip(coords, p_coords))
+            p_weakly_dominates_new = all(pc >= c for pc, c in zip(p_coords, coords))
+            new_weakly_dominates_p = all(c >= pc for c, pc in zip(coords, p_coords))
 
         if p_weakly_dominates_new:
             raise PointValidationError(
@@ -137,7 +146,8 @@ class BoundRecord:
         defining_points: List[Dict[str, Any]],
         neighbors: List[Optional[int]],
         is_extreme: bool = False,
-        extreme_dim: Optional[int] = None
+        extreme_dim: Optional[int] = None,
+        is_quasi: bool = False
     ):
         self.index = index
         self.id = bound_id
@@ -146,6 +156,7 @@ class BoundRecord:
         self.neighbors = neighbors
         self.is_extreme = is_extreme
         self.extreme_dim = extreme_dim
+        self.is_quasi = is_quasi
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -155,7 +166,8 @@ class BoundRecord:
             "defining_points": self.defining_points,
             "neighbors": self.neighbors,
             "is_extreme": self.is_extreme,
-            "extreme_dim": self.extreme_dim
+            "extreme_dim": self.extreme_dim,
+            "is_quasi": self.is_quasi
         }
 
 
@@ -166,7 +178,8 @@ def extract_bounds_data(
     points: Optional[List[lb.Point]] = None,
     lower_bound: Optional[List[float]] = None,
     upper_bound: Optional[List[float]] = None,
-    sense: Union[lb.Objective, str] = lb.Objective.MINIMIZE
+    sense: Union[lb.Objective, str] = lb.Objective.MINIMIZE,
+    include_quasi: bool = False
 ) -> Dict[str, Any]:
     """
     Extracts bounds, defining points, and neighbor relationships for 2D and 3D sets.
@@ -178,10 +191,7 @@ def extract_bounds_data(
     # Access C++ adjacency graph if available
     graph = None
     if hasattr(bound_set, "get_adjacency_graph"):
-        try:
-            graph = bound_set.get_adjacency_graph()
-        except Exception:
-            graph = None
+        graph = bound_set.get_adjacency_graph(include_quasi=include_quasi)
 
     if graph is not None:
         raw_bounds = graph.nodes
@@ -239,27 +249,21 @@ def extract_bounds_data(
             defining_points=def_pts_info,
             neighbors=node_neighbors,
             is_extreme=is_extreme,
-            extreme_dim=extreme_dim
+            extreme_dim=extreme_dim,
+            is_quasi=bool(graph.quasi[idx]) if graph is not None else False
         )
         bound_records.append(record)
 
-    # Edge list generation
-    edges_undirected = []
-    edges_directed = []  # tuples: (source, target, component)
-
-    for u_idx, record in enumerate(bound_records):
-        for k, v_idx in enumerate(record.neighbors):
-            if v_idx is not None and v_idx < len(bound_records):
-                edges_directed.append((u_idx, v_idx, k))
-                if u_idx < v_idx:
-                    edges_undirected.append((u_idx, v_idx))
-
-    # Fallback undirected edges
-    if not edges_undirected and graph is not None:
-        for u_idx, nbs in enumerate(adj_list):
-            for v_idx in nbs:
-                if u_idx < v_idx:
-                    edges_undirected.append((u_idx, v_idx))
+    edges_directed = [
+        (u_idx, v_idx, k)
+        for u_idx, record in enumerate(bound_records)
+        for k, v_idx in enumerate(record.neighbors)
+        if v_idx is not None and v_idx != u_idx and v_idx < len(bound_records)
+    ]
+    adjacency = ([(u, v) for u, neighbors in enumerate(adj_list) for v in neighbors]
+                 if graph is not None else [(u, v) for u, v, _ in edges_directed])
+    edges_undirected = sorted({(min(u, v), max(u, v)) for u, v in adjacency
+                               if u != v and 0 <= v < len(bound_records)})
 
     is_min = (sense == lb.Objective.MINIMIZE or sense == "MINIMIZE")
     if lower_bound is None or upper_bound is None:
@@ -273,6 +277,8 @@ def extract_bounds_data(
         computed_lb = list(lower_bound)
         computed_ub = list(upper_bound)
 
+    total = bound_set.size()
+    nonredundant = sum(not b.is_quasi for b in bound_records)
     return {
         "dimensions": dims,
         "sense": "MINIMIZE" if is_min else "MAXIMIZE",
@@ -283,6 +289,8 @@ def extract_bounds_data(
         "bounds": bound_records,
         "edges_undirected": edges_undirected,
         "edges_directed": edges_directed,
+        "graph_view": "raw" if include_quasi else "contracted",
+        "counts": {"total": total, "nonredundant": nonredundant, "quasi": total - nonredundant},
         "points": [{"id": p.id, "coordinates": list(p.coordinates)} for p in (points or [])]
     }
 
@@ -455,7 +463,7 @@ def plot_3d_bounds(
                 wire_color=c_wire,
                 wire_width=2.0,
                 opacity=dom_opacity,
-                name=f"Dominated D({p['id']})",
+                name=f"Dominated D({escape(p['id'])})",
                 flatshading=True
             )
             d_mesh.legendgroup = "dominated_zones"
@@ -532,14 +540,14 @@ def plot_3d_bounds(
         py = [p["coordinates"][1] for p in pts]
         pz = [p["coordinates"][2] for p in pts]
         p_text = [
-            f"<b>Point {p['id']}</b><br>Coords: ({p['coordinates'][0]:.2f}, {p['coordinates'][1]:.2f}, {p['coordinates'][2]:.2f})"
+            f"<b>Point {escape(p['id'])}</b><br>Coords: ({p['coordinates'][0]:.2f}, {p['coordinates'][1]:.2f}, {p['coordinates'][2]:.2f})"
             for p in pts
         ]
         fig.add_trace(go.Scatter3d(
             x=px, y=py, z=pz,
             mode="markers+text",
             marker=dict(size=8, color="#ef4444", symbol="circle", line=dict(color="#ffffff", width=1.5)),
-            text=[p["id"] for p in pts],
+            text=[escape(p["id"]) for p in pts],
             textposition="top right",
             hovertext=p_text,
             hoverinfo="text",
@@ -569,13 +577,13 @@ def plot_3d_bounds(
     bounds_trace_name = "Local Bounds L(N)" if is_max else "Local Bounds U(N)"
     b_text = []
     for b in b_records:
-        def_pts_str = ", ".join([dp["id"] for dp in b.defining_points])
+        def_pts_str = ", ".join([escape(dp["id"]) for dp in b.defining_points])
         nbs_str = ", ".join([
             f"ν_{k+1}={b_records[nb].id if nb is not None and nb < len(b_records) else '∅'}"
             for k, nb in enumerate(b.neighbors)
         ])
         hover_info = (
-            f"<b>Bound {b.id}</b><br>"
+            f"<b>Bound {escape(b.id)}</b><br>"
             f"Coords: ({b.coordinates[0]:.2f}, {b.coordinates[1]:.2f}, {b.coordinates[2]:.2f})<br>"
             f"Defining Points: [{def_pts_str}]<br>"
             f"Neighbors: {nbs_str}<br>"
@@ -587,7 +595,8 @@ def plot_3d_bounds(
         x=bx, y=by, z=bz,
         mode="markers+text",
         marker=dict(size=b_sizes, color=b_colors, symbol="diamond", line=dict(color="#0f172a", width=1.5)),
-        text=[b.id for b in b_records],
+        text=[escape(b.id) for b in b_records],
+        customdata=[b.id for b in b_records],
         textposition="top center",
         textfont=dict(color="#ffffff", size=11),
         hovertext=b_text,
@@ -598,7 +607,7 @@ def plot_3d_bounds(
     ))
 
     # 7. Reference and Anti-reference points
-    ref_labels = ["Nadir m", "Ideal M"] if is_max else ["Ideal m", "Nadir M"]
+    ref_labels = ["Reference m", "Anti-reference M"] if is_max else ["Anti-reference m", "Reference M"]
     ref_colors = ["#94a3b8", "#10b981"] if is_max else ["#10b981", "#94a3b8"]
     fig.add_trace(go.Scatter3d(
         x=[lb_pt[0], ub_pt[0]],
@@ -664,7 +673,7 @@ def plot_3d_bounds(
 # 2D Visualization
 # ---------------------------------------------------------------------------
 
-def plot_2d_bounds(bounds_data: Dict[str, Any]) -> go.Figure:
+def plot_2d_bounds(bounds_data: Dict[str, Any], highlight_bound_id: Optional[str] = None) -> go.Figure:
     """
     Creates 2D visualization of points, local bounds, and search zones
     matching Fig. 1 from Paper 1 & Paper 2.
@@ -696,8 +705,8 @@ def plot_2d_bounds(bounds_data: Dict[str, Any]) -> go.Figure:
             x=[x0, x1, x1, x0, x0],
             y=[y0, y0, y1, y1, y0],
             fill="toself",
-            fillcolor="rgba(56, 189, 248, 0.15)",
-            line=dict(color="rgba(56, 189, 248, 0.5)", width=1.5),
+            fillcolor="rgba(249, 115, 22, 0.25)" if b.id == highlight_bound_id else "rgba(56, 189, 248, 0.15)",
+            line=dict(color="#f97316" if b.id == highlight_bound_id else "rgba(56, 189, 248, 0.5)", width=1.5),
             mode="lines",
             hoverinfo="skip",
             showlegend=False,
@@ -708,15 +717,17 @@ def plot_2d_bounds(bounds_data: Dict[str, Any]) -> go.Figure:
     bx = [b.coordinates[0] for b in b_records]
     by = [b.coordinates[1] for b in b_records]
     b_hover = [
-        f"<b>Bound {b.id}</b><br>({b.coordinates[0]:.2f}, {b.coordinates[1]:.2f})"
+        f"<b>Bound {escape(b.id)}</b><br>({b.coordinates[0]:.2f}, {b.coordinates[1]:.2f})"
         for b in b_records
     ]
-    bounds_name = "Local Bounds U(N)"
+    bounds_name = "Local Bounds L(N)" if is_max else "Local Bounds U(N)"
     fig.add_trace(go.Scatter(
         x=bx, y=by,
         mode="markers+text",
-        marker=dict(size=10, color="#38bdf8", symbol="diamond", line=dict(color="#0f172a", width=1.5)),
-        text=[b.id for b in b_records],
+        marker=dict(size=[12 if b.id == highlight_bound_id else 10 for b in b_records],
+                    color=["#f97316" if b.id == highlight_bound_id else "#38bdf8" for b in b_records], symbol="diamond", line=dict(color="#0f172a", width=1.5)),
+        text=[escape(b.id) for b in b_records],
+        customdata=[b.id for b in b_records],
         textposition="top center",
         hovertext=b_hover,
         hoverinfo="text",
@@ -729,14 +740,14 @@ def plot_2d_bounds(bounds_data: Dict[str, Any]) -> go.Figure:
         px = [p["coordinates"][0] for p in pts]
         py = [p["coordinates"][1] for p in pts]
         p_hover = [
-            f"<b>Point {p['id']}</b><br>({p['coordinates'][0]:.2f}, {p['coordinates'][1]:.2f})"
+            f"<b>Point {escape(p['id'])}</b><br>({p['coordinates'][0]:.2f}, {p['coordinates'][1]:.2f})"
             for p in pts
         ]
         fig.add_trace(go.Scatter(
             x=px, y=py,
             mode="markers+text",
             marker=dict(size=10, color="#ef4444", symbol="circle", line=dict(color="#ffffff", width=1.5)),
-            text=[p["id"] for p in pts],
+            text=[escape(p["id"]) for p in pts],
             textposition="bottom left",
             hovertext=p_hover,
             hoverinfo="text",
@@ -835,7 +846,8 @@ def plot_pairwise_projections_2d(
                 y=[b.coordinates[dj] for b in b_records],
                 mode="markers+text",
                 marker=dict(size=b_sizes, color=b_colors, symbol="diamond", line=dict(color="#090d16", width=1.5)),
-                text=[b.id for b in b_records],
+                text=[escape(b.id) for b in b_records],
+                customdata=[b.id for b in b_records],
                 textposition="top center",
                 showlegend=(idx == 0),
                 name="Local Bounds",
@@ -852,7 +864,7 @@ def plot_pairwise_projections_2d(
                     y=[p["coordinates"][dj] for p in pts],
                     mode="markers+text",
                     marker=dict(size=8, color="#ef4444", symbol="circle", line=dict(color="#ffffff", width=1.2)),
-                    text=[p["id"] for p in pts],
+                    text=[escape(p["id"]) for p in pts],
                     textposition="bottom right",
                     showlegend=(idx == 0),
                     name="Points N",
@@ -921,20 +933,21 @@ def extract_network_graph_elements(
         coords_str = ", ".join([f"{c:.2f}" for c in b.coordinates])
         label = f"{b.id}\n({coords_str})"
         title = (
-            f"<b>Bound {b.id}</b><br>"
+            f"<b>Bound {escape(b.id)}</b><br>"
             f"Coordinates: [{coords_str}]<br>"
-            f"Status: {'Extreme Local Bound' if b.is_extreme else 'Interior'}"
+            f"Status: {'Quasi (redundant search zone)' if b.is_quasi else 'Extreme Local Bound' if b.is_extreme else 'Interior'}"
         )
         nodes.append({
             "id": b.index,
             "label": label,
             "title": title,
             "bound_id": b.id,
-            "shape": "box",
+            "is_quasi": b.is_quasi,
+            "shape": "ellipse" if b.is_quasi else "box",
             "margin": 12,
             "color": {
-                "background": "#312e81" if b.is_extreme else "#1e293b",
-                "border": "#818cf8" if b.is_extreme else "#38bdf8",
+                "background": "#422006" if b.is_quasi else "#312e81" if b.is_extreme else "#1e293b",
+                "border": "#fbbf24" if b.is_quasi else "#818cf8" if b.is_extreme else "#38bdf8",
                 "highlight": {"background": "#4338ca", "border": "#f97316"}
             },
             "font": {"color": "#f8fafc", "face": "monospace", "size": 13, "bold": True}
@@ -1043,7 +1056,7 @@ def plot_neighbor_graph_plotly(bounds_data: Dict[str, Any], mode: str = "combine
     for node in G.nodes():
         b = bounds_data["bounds"][node]
         c_str = ", ".join([f"{c:.2f}" for c in b.coordinates])
-        hover_info.append(f"<b>{b.id}</b><br>Coords: [{c_str}]<br>{'Extreme' if b.is_extreme else 'Internal'}")
+        hover_info.append(f"<b>{escape(b.id)}</b><br>Coords: [{c_str}]<br>{'Extreme' if b.is_extreme else 'Internal'}")
 
     fig.add_trace(go.Scatter(
         x=node_x, y=node_y,
@@ -1108,6 +1121,7 @@ class LocalBoundsTracker:
         lower_bound: Optional[List[float]] = None,
         upper_bound: Optional[List[float]] = None
     ):
+        sense = lb._normalize_sense(sense)
         self.sense = sense
         self.reference_point = reference_point
         self.anti_reference = anti_reference
@@ -1142,22 +1156,24 @@ class LocalBoundsTracker:
 
     def add_point(self, point: lb.Point) -> GenerationStep:
         """Adds a point and computes step changes."""
-        self.points_history.append(point)
+        validate_point(list(point.coordinates), point.id, self.points_history,
+                       self.lower_bound, self.upper_bound, self.sense)
+        points = self.points_history + [point]
         nbs = lb.NeighborhoodBoundSet(self.reference_point, self.anti_reference, sense=self.sense)
         
         prev_bound_ids = set(b.id for b in self.steps[-1].bounds_data["bounds"])
         
-        for p in self.points_history:
+        for p in points:
             nbs.update(p)
             
         curr_b_data = extract_bounds_data(
-            nbs, self.reference_point, self.anti_reference, self.points_history,
+            nbs, self.reference_point, self.anti_reference, points,
             lower_bound=self.lower_bound, upper_bound=self.upper_bound, sense=self.sense
         )
         curr_bound_ids = set(b.id for b in curr_b_data["bounds"])
         
-        destroyed = list(prev_bound_ids - curr_bound_ids)
-        created = list(curr_bound_ids - prev_bound_ids)
+        destroyed = sorted(prev_bound_ids - curr_bound_ids)
+        created = sorted(curr_bound_ids - prev_bound_ids)
         
         step = GenerationStep(
             step=len(self.steps),
@@ -1166,6 +1182,7 @@ class LocalBoundsTracker:
             destroyed_bounds=destroyed,
             new_bounds=created
         )
+        self.points_history.append(point)
         self.steps.append(step)
         return step
 

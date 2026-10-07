@@ -63,8 +63,9 @@
       
       <!-- Preset Selection -->
       <div class="flex items-center space-x-1.5 bg-slate-900 border border-slate-800 rounded px-2.5 py-1">
-        <label class="text-[11px] text-slate-400 font-medium">Preset:</label>
+        <label for="preset-select" class="text-[11px] text-slate-400 font-medium">Preset:</label>
         <select id="preset-select" class="bg-transparent text-slate-200 text-xs focus:outline-none cursor-pointer">
+          <option value="custom" disabled class="bg-slate-900">Custom instance</option>
           <option value="paper2" class="bg-slate-900">Dächert et al. (2017) Ex. 2.8 (3D GP)</option>
           <option value="paper1_sa" class="bg-slate-900">Klamroth et al. (2015) Ex. 2 (3D SA)</option>
           <option value="paper1_ngp" class="bg-slate-900">Klamroth et al. (2015) Ex. 3 (3D NGP Ties)</option>
@@ -100,22 +101,22 @@
 
       <!-- Lower Bound (m): Ideal in Min, Nadir in Max -->
       <div class="inline-flex items-center rounded-md bg-slate-900 border border-slate-700/80 shadow-inner overflow-hidden focus-within:border-sky-500 focus-within:ring-1 focus-within:ring-sky-500/40 transition">
-        <div class="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800/90 border-r border-slate-700/80 select-none" id="wrap-lbl-lb" title="Lower bound of search space (Ideal in Min, Nadir in Max)">
+        <div class="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800/90 border-r border-slate-700/80 select-none" id="wrap-lbl-lb" title="Lower bound of the configured interval">
           <span class="w-1.5 h-1.5 rounded-full bg-emerald-400" id="dot-lb"></span>
-          <span id="lbl-lb-name" class="text-[11px] font-semibold text-slate-300">Ideal</span>
+          <span id="lbl-lb-name" class="text-[11px] font-semibold text-slate-300">Lower</span>
           <span id="lbl-lb-sym" class="font-mono text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1 rounded leading-tight">m</span>
         </div>
-        <input type="text" id="cfg-lb" value="0.0, 0.0, 0.0" class="w-24 sm:w-28 px-2.5 py-1 bg-transparent font-mono-num text-xs text-slate-100 placeholder-slate-500 focus:outline-none text-center" placeholder="0, 0, 0">
+        <input type="text" id="cfg-lb" aria-label="Lower interval bounds" value="0.0, 0.0, 0.0" class="w-24 sm:w-28 px-2.5 py-1 bg-transparent font-mono-num text-xs text-slate-100 placeholder-slate-500 focus:outline-none text-center" placeholder="0, 0, 0">
       </div>
 
       <!-- Upper Bound (M): Nadir in Min, Ideal in Max -->
       <div class="inline-flex items-center rounded-md bg-slate-900 border border-slate-700/80 shadow-inner overflow-hidden focus-within:border-sky-500 focus-within:ring-1 focus-within:ring-sky-500/40 transition">
-        <div class="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800/90 border-r border-slate-700/80 select-none" id="wrap-lbl-ub" title="Upper bound of search space (Nadir in Min, Ideal in Max)">
+        <div class="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800/90 border-r border-slate-700/80 select-none" id="wrap-lbl-ub" title="Upper bound of the configured interval">
           <span class="w-1.5 h-1.5 rounded-full bg-amber-400" id="dot-ub"></span>
-          <span id="lbl-ub-name" class="text-[11px] font-semibold text-slate-300">Nadir</span>
+          <span id="lbl-ub-name" class="text-[11px] font-semibold text-slate-300">Upper</span>
           <span id="lbl-ub-sym" class="font-mono text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1 rounded leading-tight">M</span>
         </div>
-        <input type="text" id="cfg-ub" value="10.0, 10.0, 10.0" class="w-24 sm:w-28 px-2.5 py-1 bg-transparent font-mono-num text-xs text-slate-100 placeholder-slate-500 focus:outline-none text-center" placeholder="10, 10, 10">
+        <input type="text" id="cfg-ub" aria-label="Upper interval bounds" value="10.0, 10.0, 10.0" class="w-24 sm:w-28 px-2.5 py-1 bg-transparent font-mono-num text-xs text-slate-100 placeholder-slate-500 focus:outline-none text-center" placeholder="10, 10, 10">
       </div>
 
       <!-- Apply Config Button -->
@@ -146,7 +147,7 @@
           Point z3 added.
         </p>
         
-        <input type="range" id="timeline-slider" min="0" max="3" value="3" class="w-full accent-sky-500 cursor-pointer">
+        <input type="range" id="timeline-slider" aria-label="Insertion step" min="0" max="3" value="3" class="w-full accent-sky-500 cursor-pointer">
 
         <div class="grid grid-cols-4 gap-1 text-[11px] pt-1">
           <button id="btn-first-step" class="bg-slate-800 hover:bg-slate-700 text-slate-300 py-1 rounded border border-slate-700 transition" title="First step">
@@ -203,8 +204,8 @@
         <!-- Add Point Form with Instant Validation -->
         <form id="add-point-form" class="space-y-1.5 border-t border-slate-800 pt-2.5">
           <div class="flex space-x-1.5">
-            <input type="text" id="pt-id" placeholder="ID" class="w-16 bg-slate-900 text-slate-200 text-xs px-2 py-1.5 rounded border border-slate-800 focus:border-sky-500 focus:outline-none">
-            <input type="text" id="pt-coords" placeholder="e.g. 2.0, 2.0, 2.0" class="flex-1 bg-slate-900 font-mono-num text-slate-200 text-xs px-2 py-1.5 rounded border border-slate-800 focus:border-sky-500 focus:outline-none">
+            <input type="text" id="pt-id" aria-label="Point identifier" placeholder="ID" class="w-16 bg-slate-900 text-slate-200 text-xs px-2 py-1.5 rounded border border-slate-800 focus:border-sky-500 focus:outline-none">
+            <input type="text" id="pt-coords" aria-label="Point coordinates" placeholder="e.g. 2.0, 2.0, 2.0" class="flex-1 bg-slate-900 font-mono-num text-slate-200 text-xs px-2 py-1.5 rounded border border-slate-800 focus:border-sky-500 focus:outline-none">
           </div>
           <button type="submit" class="w-full bg-slate-800 hover:bg-slate-750 text-sky-400 border border-slate-700 text-xs py-1.5 rounded font-medium transition flex items-center justify-center gap-1">
             <i data-lucide="plus" class="w-3.5 h-3.5"></i> Insert Point into N
@@ -212,6 +213,12 @@
         </form>
       </div>
 
+      <form id="probe-form" class="panel rounded border p-3 flex flex-col gap-2">
+        <label for="probe-coords" class="text-xs font-semibold">Probe search region</label>
+        <input id="probe-coords" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs font-mono-num" placeholder="Coordinates, comma separated">
+        <button class="bg-slate-800 border border-slate-700 rounded py-1 text-xs" type="submit">Check membership</button>
+        <p id="probe-result" role="status" aria-live="polite" class="text-xs text-slate-300"></p>
+      </form>
     </aside>
 
     <!-- RIGHT WORKSPACE: Viewport, Bounds Table, and Neighbor Graph -->
@@ -275,7 +282,7 @@
               <span id="opacity-val-badge" class="font-mono-num text-[10px] font-bold text-sky-400 my-1">100%</span>
               
               <div class="py-1 flex items-center justify-center">
-                <input type="range" id="opacity-slider" min="0" max="100" value="100" step="5"
+                <input type="range" id="opacity-slider" aria-label="Dominated region opacity" min="0" max="100" value="100" step="5"
                        orient="vertical"
                        class="opacity-range h-28 cursor-pointer accent-sky-500"
                        title="Drag to adjust Dominated Zones Opacity (0% - 100%)">
@@ -327,12 +334,17 @@
             <span class="text-[10px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
               <i data-lucide="share-2" class="w-3.5 h-3.5 text-emerald-400"></i> Adjacency &amp; Neighbor Graph
             </span>
+            <select id="graph-view" aria-label="Graph topology" class="bg-slate-900 border border-slate-700 rounded text-xs">
+              <option value="contracted">Contracted</option>
+              <option value="raw">Raw (ellipses = quasi)</option>
+            </select>
+            <span id="graph-counts" class="text-[10px] text-slate-400"></span>
             <span class="text-slate-700">|</span>
             <div class="inline-flex items-center p-0.5 rounded-md bg-slate-900 border border-slate-700 shadow-inner" role="tablist">
               <button class="px-2.5 py-0.5 rounded text-xs font-semibold bg-sky-600 text-white shadow-sm transition-all duration-150 cursor-pointer graph-mode-btn" data-mode="combined" title="View Combined Multi-Graph with colored component edges">
                 Combined Multi-Graph (νₖ)
               </button>
-              <button class="px-2.5 py-0.5 rounded text-xs font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-all duration-150 cursor-pointer graph-mode-btn" data-mode="undirected" title="View Undirected Neighborhood Graph G">
+              <button class="px-2.5 py-0.5 rounded text-xs font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-all duration-150 cursor-pointer graph-mode-btn" data-mode="undirected" title="View undirected adjacency of the selected topology">
                 Undirected Graph G
               </button>
             </div>
@@ -361,8 +373,30 @@
     let currentStep = 0;
     let activeViewTab = "spatial";
     let activeGraphMode = "combined";
+    let activeGraphView = "contracted";
     let highlightBoundId = null;
     let network = null;
+    let stateRequest = 0, figureRequest = 0, graphRequest = 0;
+    let probeRequest = 0;
+    let graphNodes = null;
+
+    function escapeHtml(value) {
+      const span = document.createElement("span");
+      span.textContent = String(value);
+      return span.innerHTML;
+    }
+
+    async function fetchJSON(url) {
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Request failed");
+        return data;
+      } catch (error) {
+        showError(error.message);
+        return null;
+      }
+    }
     let isPlaying = false;
     let playInterval = null;
     let isPhysicsEnabled = true;
@@ -402,6 +436,7 @@
 
     function updateConfigUI() {
       if (!currentState) return;
+      document.getElementById("preset-select").value = currentState.preset || "custom";
 
       const is2D = (currentState.dimensions === 2);
       btnDim2.className = is2D
@@ -429,8 +464,8 @@
       const wrapLb = document.getElementById("wrap-lbl-lb");
       const wrapUb = document.getElementById("wrap-lbl-ub");
 
-      if (lblLbName) lblLbName.textContent = isMin ? "Ideal" : "Nadir";
-      if (lblUbName) lblUbName.textContent = isMin ? "Nadir" : "Ideal";
+      if (lblLbName) lblLbName.textContent = "Lower";
+      if (lblUbName) lblUbName.textContent = "Upper";
 
       if (dotLb) dotLb.className = isMin ? "w-1.5 h-1.5 rounded-full bg-emerald-400" : "w-1.5 h-1.5 rounded-full bg-amber-400";
       if (dotUb) dotUb.className = isMin ? "w-1.5 h-1.5 rounded-full bg-amber-400" : "w-1.5 h-1.5 rounded-full bg-emerald-400";
@@ -446,13 +481,13 @@
           : "font-mono text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1 rounded leading-tight";
       }
 
-      if (wrapLb) wrapLb.title = isMin ? "Ideal point m (lower bound of search space)" : "Nadir point m (lower bound of search space)";
-      if (wrapUb) wrapUb.title = isMin ? "Nadir point M (upper bound of search space)" : "Ideal point M (upper bound of search space)";
+      if (wrapLb) wrapLb.title = isMin ? "Anti-reference m (included boundary)" : "Reference m (excluded boundary)";
+      if (wrapUb) wrapUb.title = isMin ? "Reference M (excluded boundary)" : "Anti-reference M (included boundary)";
 
       cfgLb.value = currentState.lower_bound.join(", ");
       cfgUb.value = currentState.upper_bound.join(", ");
 
-      boundsTableTitle.textContent = "Local Bounds U(N)";
+      boundsTableTitle.textContent = isMin ? "Local Bounds U(N)" : "Local Bounds L(N)";
       document.getElementById("pt-coords").placeholder = is2D ? "e.g. 3.0, 7.0" : "e.g. 2.0, 2.0, 2.0";
 
       const tabPairwise = document.getElementById("tab-pairwise");
@@ -462,20 +497,25 @@
         if (labelSpatialTab) labelSpatialTab.textContent = "2D View";
         if (activeViewTab === "pairwise") {
           activeViewTab = "spatial";
-          updateViewTabUI();
         }
       } else {
         if (tabPairwise) tabPairwise.style.display = "inline-flex";
         if (labelSpatialTab) labelSpatialTab.textContent = "3D View";
       }
-      syncOpacityWidgetState();
+      updateViewTabUI();
       lucide.createIcons();
     }
 
     async function syncState(step = null) {
+      const requestId = ++stateRequest;
+      ++figureRequest;
+      ++graphRequest;
       const url = step !== null ? `/api/state?step=${step}` : "/api/state";
-      const res = await fetch(url);
-      currentState = await res.json();
+      const data = await fetchJSON(url);
+      if (!data || requestId !== stateRequest) return;
+      currentState = data;
+      document.getElementById("probe-result").textContent = "";
+      if (!currentState.table.some(row => row.ID === highlightBoundId)) highlightBoundId = null;
       currentStep = currentState.current_step;
 
       updateConfigUI();
@@ -485,7 +525,7 @@
       stepBadge.textContent = `Step ${currentStep} / ${currentState.total_steps}`;
       
       if (currentStep === 0) {
-        const u0Desc = (currentState.sense === "MINIMIZE") ? "u0 (Nadir M)" : "u0 (Nadir m)";
+        const u0Desc = (currentState.sense === "MINIMIZE") ? "u0 (reference M)" : "u0 (reference m)";
         stepDesc.textContent = `Initial state: U(∅) = {${u0Desc}} defined by dummy reference points.`;
       } else {
         const lastPt = currentState.points[currentStep - 1];
@@ -508,7 +548,7 @@
         tr.className = isIncludedInCurrentStep ? "hover:bg-slate-800/60 transition" : "opacity-35 hover:bg-slate-800/60 transition";
         
         tr.innerHTML = `
-          <td class="py-1 px-2 font-bold ${isIncludedInCurrentStep ? 'text-red-400' : 'text-slate-500'}">${pt.id}</td>
+          <td class="py-1 px-2 font-bold ${isIncludedInCurrentStep ? 'text-red-400' : 'text-slate-500'}">${escapeHtml(pt.id)}</td>
           <td class="py-1 px-2 text-slate-300">(${pt.coordinates.map(c => Number(c).toFixed(2)).join(", ")})</td>
           <td class="py-1 px-1.5 text-right">
             <button onclick="deletePoint(${idx})" class="text-slate-500 hover:text-red-400 transition" title="Delete Point">
@@ -546,18 +586,26 @@
         const tr = document.createElement("tr");
         tr.className = `cursor-pointer transition ${isHighlighted ? 'bg-sky-950/80 font-bold border-l-2 border-sky-400' : 'hover:bg-slate-800/50'}`;
         tr.onclick = () => selectBound(row.ID);
+        tr.tabIndex = 0;
+        tr.setAttribute("aria-label", `Select bound ${row.ID}`);
+        tr.onkeydown = (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            selectBound(row.ID);
+          }
+        };
 
-        let rowHTML = `<td class="py-1.5 px-2 font-bold text-slate-200">${row.ID}</td>`;
+        let rowHTML = `<td class="py-1.5 px-2 font-bold text-slate-200">${escapeHtml(row.ID)}</td>`;
         for (let j = 1; j <= dims; j++) {
           rowHTML += `<td class="py-1.5 px-1.5 text-slate-300">${row[`u_${j}`]}</td>`;
         }
         for (let j = 1; j <= dims; j++) {
-          rowHTML += `<td class="py-1.5 px-1.5 text-sky-400">${row[`z^${j}(u)`]}</td>`;
+          rowHTML += `<td class="py-1.5 px-1.5 text-sky-400">${escapeHtml(row[`z^${j}(u)`])}</td>`;
         }
         for (let k = 1; k <= dims; k++) {
           const val = row[`ν_${k}`];
           const isExt = val.includes("Extreme");
-          rowHTML += `<td class="py-1.5 px-1.5 ${isExt ? 'text-slate-500 italic' : 'text-emerald-400'}">${val}</td>`;
+          rowHTML += `<td class="py-1.5 px-1.5 ${isExt ? 'text-slate-500 italic' : 'text-emerald-400'}">${escapeHtml(val)}</td>`;
         }
         rowHTML += `<td class="py-1.5 px-2 text-[10px] text-slate-400">${row.Status}</td>`;
         tr.innerHTML = rowHTML;
@@ -566,30 +614,46 @@
     }
 
     async function renderPlotlyView() {
+      const requestId = ++figureRequest;
+      const stateId = stateRequest;
       let endpoint = (activeViewTab === "pairwise") ? "/api/figure_pairwise" : "/api/figure_3d";
       const showOccupied = document.getElementById("toggle-occupied")?.checked ? "1" : "0";
       const showBoxes = document.getElementById("toggle-boxes")?.checked ? "1" : "0";
 
       let query = `?step=${currentStep}&show_occupied=${showOccupied}&show_boxes=${showBoxes}&dom_opacity=${currentDomOpacity}`;
-      if (highlightBoundId) query += `&highlight=${highlightBoundId}`;
+      if (highlightBoundId) query += `&highlight=${encodeURIComponent(highlightBoundId)}`;
 
-      const res = await fetch(`${endpoint}${query}`);
-      const figData = await res.json();
+      const figData = await fetchJSON(`${endpoint}${query}`);
+      if (!figData || requestId !== figureRequest || stateId !== stateRequest) return;
 
-      Plotly.react("plotly-container", figData.data, figData.layout, {
+      await Plotly.react("plotly-container", figData.data, figData.layout, {
         responsive: true,
         displayModeBar: true,
         displaylogo: false
       });
+      if (!plotlyContainer._boundSelectionInstalled) {
+        plotlyContainer.on("plotly_click", (event) => {
+          const point = event.points[0];
+          const boundId = point?.data?.customdata?.[point.pointNumber];
+          if (boundId && currentState.table.some(row => row.ID === boundId)) selectBound(boundId);
+        });
+        plotlyContainer._boundSelectionInstalled = true;
+      }
     }
 
     async function renderNetworkGraph() {
-      const res = await fetch(`/api/graph?step=${currentStep}&mode=${activeGraphMode}`);
-      const graphData = await res.json();
+      const requestId = ++graphRequest;
+      const stateId = stateRequest;
+      const graphData = await fetchJSON(`/api/graph?step=${currentStep}&mode=${activeGraphMode}&view=${activeGraphView}`);
+      if (!graphData || requestId !== graphRequest || stateId !== stateRequest) return;
+      const counts = graphData.counts;
+      document.getElementById("graph-counts").textContent = counts
+        ? `${counts.total} total · ${counts.quasi} quasi · ${counts.nonredundant} nonredundant` : "";
 
       const container = document.getElementById("vis-network-container");
 
       const nodes = new vis.DataSet(graphData.nodes);
+      graphNodes = graphData.nodes;
       const edges = new vis.DataSet(graphData.edges);
 
       const options = {
@@ -622,26 +686,78 @@
       }
 
       network = new vis.Network(container, { nodes, edges }, options);
+      syncGraphSelection();
 
       network.on("selectNode", function (params) {
         if (params.nodes.length > 0) {
           const selectedNodeId = params.nodes[0];
           const nodeObj = nodes.get(selectedNodeId);
           if (nodeObj && nodeObj.bound_id) {
-            selectBound(nodeObj.bound_id);
+            if (nodeObj.is_quasi) {
+              highlightBoundId = null;
+              renderBoundsTable();
+              renderPlotlyView();
+            } else {
+              selectBound(nodeObj.bound_id);
+            }
           }
         }
       });
     }
 
+    function syncGraphSelection() {
+      if (!network || !graphNodes) return;
+      const selected = graphNodes.find(node => node.bound_id === highlightBoundId);
+      network.selectNodes(selected ? [selected.id] : []);
+    }
+
     function selectBound(boundId) {
       highlightBoundId = (highlightBoundId === boundId) ? null : boundId;
+      syncGraphSelection();
       renderBoundsTable();
       renderPlotlyView();
     }
 
+    document.getElementById("graph-view").onchange = (event) => {
+      activeGraphView = event.target.value;
+      renderNetworkGraph();
+    };
+
+    document.getElementById("probe-form").onsubmit = async (event) => {
+      event.preventDefault();
+      const requestId = ++probeRequest, stateId = stateRequest;
+      const coords = document.getElementById("probe-coords").value.split(",")
+        .map(s => s.trim() ? Number(s.trim()) : NaN);
+      if (coords.length !== currentState.dimensions || coords.some(c => !Number.isFinite(c))) {
+        showError(`Enter ${currentState.dimensions} finite coordinates.`);
+        return;
+      }
+      try {
+        const response = await fetch(`/api/probe?step=${currentStep}`, {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({coordinates: coords})
+        });
+        const result = await response.json();
+        if (requestId !== probeRequest || stateId !== stateRequest) return;
+        if (!response.ok) throw new Error(result.error || "Probe failed");
+        const bound = result.containing_bound;
+        document.getElementById("probe-result").textContent = bound
+          ? `Inside ${bound.id}: ${result.search_zone.join("; ")}.`
+          : result.in_domain ? "Outside the search region (dominated or on a local bound boundary)."
+          : `Outside the configured domain: ${result.domain.join("; ")}.`;
+        highlightBoundId = bound ? bound.id : null;
+        hideError();
+        syncGraphSelection();
+        renderBoundsTable();
+        renderPlotlyView();
+      } catch (error) {
+        if (requestId === probeRequest && stateId === stateRequest) showError(error.message);
+      }
+    };
+
     document.getElementById("btn-clear-hl").onclick = () => {
       highlightBoundId = null;
+      syncGraphSelection();
       renderBoundsTable();
       renderPlotlyView();
     };
@@ -691,7 +807,7 @@
         return;
       }
 
-      const coords = rawCoords.split(",").map(s => parseFloat(s.trim()));
+      const coords = rawCoords.split(",").map(s => s.trim() ? Number(s.trim()) : NaN);
       const res = await fetch("/api/add_point", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -744,8 +860,8 @@
 
     // Apply Button
     document.getElementById("btn-apply-config").onclick = () => {
-      const rawLb = cfgLb.value.split(",").map(x => parseFloat(x.trim()));
-      const rawUb = cfgUb.value.split(",").map(x => parseFloat(x.trim()));
+      const rawLb = cfgLb.value.split(",").map(x => x.trim() ? Number(x.trim()) : NaN);
+      const rawUb = cfgUb.value.split(",").map(x => x.trim() ? Number(x.trim()) : NaN);
       applyConfig({ lower_bound: rawLb, upper_bound: rawUb });
     };
 
@@ -754,8 +870,8 @@
       const payload = {
         dimensions: overrides.dimensions || currentState.dimensions,
         sense: overrides.sense || currentState.sense,
-        lower_bound: overrides.lower_bound || cfgLb.value.split(",").map(x => parseFloat(x.trim())),
-        upper_bound: overrides.upper_bound || cfgUb.value.split(",").map(x => parseFloat(x.trim()))
+        lower_bound: overrides.lower_bound || cfgLb.value.split(",").map(x => x.trim() ? Number(x.trim()) : NaN),
+        upper_bound: overrides.upper_bound || cfgUb.value.split(",").map(x => x.trim() ? Number(x.trim()) : NaN)
       };
 
       // Adjust default bounds if dimension changed
@@ -789,7 +905,7 @@
       });
       const spatialControls = document.getElementById("spatial-controls");
       if (spatialControls) {
-        spatialControls.style.display = (activeViewTab === "spatial") ? "flex" : "none";
+        spatialControls.style.display = (activeViewTab === "spatial" && currentState?.dimensions === 3) ? "flex" : "none";
       }
       syncOpacityWidgetState();
     }

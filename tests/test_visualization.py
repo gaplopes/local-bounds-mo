@@ -4,6 +4,12 @@ Unit and Integration Tests for Local Bounds Visualization, Table, Neighbor Graph
 
 import unittest
 import json
+import contextlib
+import io
+import tempfile
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
 import local_bounds as lb
 import visualization.engine as vis
 import visualization.app as web_app
@@ -402,8 +408,212 @@ class TestVisualization(unittest.TestCase):
         self.assertEqual(d_p1["points"][1]["coordinates"], [6.0, 2.0, 4.0])
         self.assertEqual(d_p1["bounds_count"], 5)
 
+    def test_overlapping_configuration_requests(self):
+        def configure_and_read(index):
+            dims = 2 + index % 2
+            with web_app.app.test_client() as client:
+                configured = client.post("/api/configure", json={"dimensions": dims})
+                self.assertEqual(configured.status_code, 200)
+                self.assertEqual(configured.get_json()["dimensions"], dims)
+                response = client.get("/api/state")
+                self.assertEqual(response.status_code, 200)
+                data = response.get_json()
+                self.assertEqual(len(data["lower_bound"]), data["dimensions"])
+                self.assertEqual(len(data["upper_bound"]), data["dimensions"])
+                self.assertEqual(len(data["table"][0]["Coordinates"]), data["dimensions"])
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            list(executor.map(configure_and_read, range(24)))
+
+    def test_malformed_requests_are_transactional(self):
+        client = web_app.app.test_client()
+        client.post("/api/load_preset", json={"preset": "paper2"})
+        before = client.get("/api/state").get_json()
+        invalid = [
+            ("configure", {"dimensions": "oops"}),
+            ("configure", {"dimensions": 2.5}),
+            ("configure", {"dimensions": True}),
+            ("configure", {"sense": "TYPO"}),
+            ("configure", {"sense": []}),
+            ("configure", {"lower_bound": ["nan", 0, 0], "upper_bound": [10, 10, 10]}),
+            ("configure", {"lower_bound": [0, 0, 0]}),
+            ("configure", {"lower_bound": "000", "upper_bound": [10, 10, 10]}),
+            ("configure", {"lower_bound": [True, 0, 0], "upper_bound": [10, 10, 10]}),
+            ("add_point", {"id": 42, "coordinates": [1, 5, 1]}),
+            ("add_point", {"coordinates": "123"}),
+            ("add_point", {"coordinates": [float("inf"), 5, 1]}),
+            ("add_point", {"coordinates": [-5e-8, 5, 1]}),
+            ("add_point", {"coordinates": [10, 5, 1]}),
+            ("delete_point", {"index": "oops"}),
+            ("delete_point", {"index": 1.5}),
+            ("delete_point", {"index": -1}),
+            ("load_preset", {"preset": "unknown"}),
+            ("load_preset", {"preset": []}),
+        ]
+        for route, payload in invalid:
+            with self.subTest(route=route, payload=payload):
+                response = client.post("/api/" + route, json=payload)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("code", response.get_json())
+                self.assertEqual(client.get("/api/state").get_json(), before)
+        for body in ('[]', 'null', '"text"', '{broken'):
+            response = client.post("/api/configure", data=body, content_type="application/json")
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("code", response.get_json())
+        for query in ("/api/state?step=oops", "/api/graph?mode=unknown", "/api/figure_3d?dom_opacity=nan"):
+            self.assertEqual(client.get(query).status_code, 400)
+
+    def test_exact_boundaries_and_native_errors(self):
+        for sense in (lb.Objective.MINIMIZE, lb.Objective.MAXIMIZE):
+            is_min = sense == lb.Objective.MINIMIZE
+            valid = [0, 5] if is_min else [10, 5]
+            invalid = ([-5e-8, 5], [10, 5]) if is_min else ([10+5e-8, 5], [0, 5])
+            ref, anti = ([10, 10], [0, 0]) if is_min else ([0, 0], [10, 10])
+            nbs = lb.NeighborhoodBoundSet(ref, anti, sense=sense)
+            for coords in invalid:
+                with self.assertRaises(vis.PointValidationError):
+                    vis.validate_point(coords, "z", [], [0, 0], [10, 10], sense)
+                with self.assertRaises(ValueError):
+                    nbs.update(lb.Point("z", coords))
+            vis.validate_point(valid, "z", [], [0, 0], [10, 10], sense)
+            self.assertTrue(nbs.update(lb.Point("z", valid)))
+            with self.assertRaises(ValueError):
+                nbs.find_containing_bound([1])
+        missing = lb.BoundSet([10, 10])
+        with self.assertRaises(RuntimeError):
+            missing.update_ra(lb.Point("z", [3, 7]))
+        with self.assertRaises(ValueError):
+            lb.BoundSet([10, 10], sense="TYPO")
+        tracker = vis.LocalBoundsTracker([10, 10], [0, 0], sense="MINIMIZE")
+        with self.assertRaises(vis.PointValidationError):
+            tracker.add_point(lb.Point("z", [-5e-8, 5]))
+        self.assertEqual(len(tracker.steps), 1)
+        self.assertEqual(tracker.points_history, [])
+
+    def test_ngp_graph_uses_full_contracted_adjacency(self):
+        ref, anti = [10]*3, [0]*3
+        nbs = lb.NeighborhoodBoundSet(ref, anti)
+        points = [lb.Point(f"z{i}", coords) for i, coords in enumerate([[4,0,4], [4,3,1], [2,3,2]])]
+        for point in points:
+            nbs.update(point)
+        graph = nbs.get_adjacency_graph()
+        expected = {(min(u,v), max(u,v)) for u, neighbors in enumerate(graph.adjacency_list)
+                    for v in neighbors if u != v}
+        data = vis.extract_bounds_data(nbs, ref, anti, points)
+        self.assertEqual(len(expected), 9)
+        self.assertEqual(set(data["edges_undirected"]), expected)
+        elements = vis.extract_network_graph_elements(data, mode="undirected")
+        self.assertEqual({(e["from"], e["to"]) for e in elements["edges"]}, expected)
+
+    def test_2d_highlight_and_escaped_report(self):
+        from visualization.cli import generate_html_report
+        payload = '<img src=x onerror="alert(1)"></script>'
+        nbs = lb.NeighborhoodBoundSet([10,10], [0,0])
+        point = lb.Point(payload, [3,7])
+        nbs.update(point)
+        data = vis.extract_bounds_data(nbs, [10,10], [0,0], [point])
+        highlighted = data["bounds"][0].id
+        fig = vis.plot_2d_bounds(data, highlight_bound_id=highlighted)
+        bounds = next(trace for trace in fig.data if trace.mode == "markers+text" and trace.legendgroup == "local_bounds")
+        self.assertEqual(bounds.marker.color[0], "#f97316")
+        self.assertEqual(bounds.customdata[0], highlighted)
+        self.assertNotIn(payload, fig.to_json())
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
+            output = Path(directory) / "report.html"
+            generate_html_report(data, str(output))
+            html = output.read_text()
+            self.assertNotIn(payload, html)
+            self.assertIn("&lt;img", html)
+            self.assertNotIn('src="https://cdn.plot.ly', html)
+        maxdata = dict(data, sense="MAXIMIZE")
+        self.assertTrue(any(trace.name == "Local Bounds L(N)" for trace in vis.plot_2d_bounds(maxdata).data))
+
+    def test_raw_graph_preserves_quasi_nodes(self):
+        for sense in (lb.Objective.MINIMIZE, lb.Objective.MAXIMIZE):
+            is_min = sense == lb.Objective.MINIMIZE
+            ref, anti = ([6]*3, [0]*3) if is_min else ([0]*3, [6]*3)
+            nbs = lb.NeighborhoodBoundSet(ref, anti, sense=sense)
+            for i, z in enumerate([[5,2,5], [2,4,3], [4,4,1], [4,3,2], [3,3,3]]):
+                nbs.update(lb.Point(f"z{i}", z if is_min else [6-c for c in z]))
+            graph = nbs.get_adjacency_graph(include_quasi=True)
+            self.assertEqual(len(graph.nodes), nbs.size())
+            self.assertEqual(sum(not q for q in graph.quasi), 8)
+            self.assertGreater(sum(graph.quasi), 0)
+            for u, neighbors in enumerate(graph.adjacency_list):
+                for v in neighbors:
+                    self.assertIn(u, graph.adjacency_list[v])
+            data = vis.extract_bounds_data(nbs, ref, anti, sense=sense, include_quasi=True)
+            self.assertEqual(data["counts"]["nonredundant"], 8)
+            self.assertEqual(data["counts"]["total"], len(data["bounds"]))
+            elements = vis.extract_network_graph_elements(data)
+            self.assertEqual(sum(n["is_quasi"] for n in elements["nodes"]), sum(graph.quasi))
+            self.assertTrue(all(n["shape"] == "ellipse" for n in elements["nodes"] if n["is_quasi"]))
+        client = web_app.app.test_client()
+        client.post("/api/load_preset", json={"preset": "paper1_ngp"})
+        raw = client.get("/api/graph?view=raw").get_json()
+        clean = client.get("/api/graph").get_json()
+        self.assertEqual(raw["view"], "raw")
+        self.assertEqual(raw["counts"], clean["counts"])
+        self.assertEqual(len(raw["nodes"]), raw["counts"]["total"])
+        self.assertEqual(len(clean["nodes"]), raw["counts"]["nonredundant"])
+        self.assertEqual(client.get("/api/graph?view=invalid").status_code, 400)
+
+    def test_membership_probe_exact_boundaries_and_no_mutation(self):
+        client = web_app.app.test_client()
+        for sense in ("MINIMIZE", "MAXIMIZE"):
+            client.post("/api/configure", json={"dimensions": 2, "sense": sense})
+            is_min = sense == "MINIMIZE"
+            point = [3,7] if is_min else [7,3]
+            client.post("/api/add_point", json={"id": "z", "coordinates": point})
+            before = client.get("/api/state").get_json()
+            outside = [10,5] if is_min else [0,5]
+            anti = [0,5] if is_min else [10,5]
+            for coords, domain, search in [(point, True, False), (outside, False, False), (anti, True, True)]:
+                result = client.post("/api/probe", json={"coordinates": coords})
+                self.assertEqual(result.status_code, 200)
+                result = result.get_json()
+                self.assertEqual(result["in_domain"], domain)
+                self.assertEqual(result["in_search_region"], search)
+                self.assertEqual(result["containing_bound"] is not None, search)
+                self.assertIn("<", "; ".join(result["domain"]))
+                if search:
+                    self.assertIn(result["containing_bound"]["id"], {r["ID"] for r in before["table"]})
+            initial = client.post("/api/probe?step=0", json={"coordinates": point}).get_json()
+            self.assertTrue(initial["in_search_region"])
+            for coords in ([1], [float("nan"), 1], [True,1], "1,1"):
+                self.assertEqual(client.post("/api/probe", json={"coordinates": coords}).status_code, 400)
+            self.assertEqual(client.get("/api/state").get_json(), before)
+
+    def test_shared_presets_and_custom_cli_dimensions(self):
+        from visualization import cli
+        from visualization.presets import PRESETS
+        client = web_app.app.test_client()
+        for preset, (sense, coordinates) in PRESETS.items():
+            response = client.post("/api/load_preset", json={"preset": preset})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_json()["preset"], preset)
+            self.assertEqual([p["coordinates"] for p in response.get_json()["points"]], coordinates)
+            with patch("sys.argv", ["cli", "--preset", preset]), patch.object(cli, "generate_html_report") as report, contextlib.redirect_stdout(io.StringIO()):
+                cli.main()
+            cli_data = report.call_args.args[0]
+            self.assertEqual([p["coordinates"] for p in cli_data["points"]], coordinates)
+            self.assertEqual(cli_data["sense"], sense)
+        client.post("/api/load_preset", json={"preset": "2d"})
+        client.post("/api/delete_point", json={"index": 0})
+        custom = client.post("/api/add_point", json={"coordinates": [1,9]}).get_json()
+        self.assertIsNone(custom["preset"])
+        self.assertEqual(custom["points"][-1]["id"], "z4")
+        with patch("sys.argv", ["cli", "--points", "[[3,7]]", "--ref", "20,20", "--anti", "0,0"]), patch.object(cli, "generate_html_report") as report, contextlib.redirect_stdout(io.StringIO()):
+            cli.main()
+        self.assertEqual(report.call_args.args[0]["dimensions"], 2)
+        self.assertEqual(report.call_args.args[0]["reference_point"], [20,20])
+        with patch("sys.argv", ["cli", "--points", "[]"]), patch.object(cli, "generate_html_report") as report, contextlib.redirect_stdout(io.StringIO()):
+            cli.main()
+        self.assertEqual(report.call_args.args[0]["points"], [])
+        with patch("sys.argv", ["cli", "--points", "[1]"]), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            cli.main()
+        self.assertEqual(error.exception.code, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
-
 

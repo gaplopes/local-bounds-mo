@@ -4,16 +4,14 @@ Command-Line Script to Visualize Local Bounds Generation in 2D and 3D.
 """
 
 import os
-import sys
 import argparse
 import json
+from html import escape
 from typing import List
-
-# Ensure library is accessible
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
 import local_bounds as lb
 from . import engine as vis
+from .presets import PRESETS
 
 
 def format_terminal_table(table_data: List[dict], dimensions: int) -> str:
@@ -75,7 +73,7 @@ def generate_html_report(bounds_data: dict, output_path: str):
     fig_graph = vis.plot_neighbor_graph_plotly(bounds_data, mode="combined")
     table_rows = vis.create_bounds_table(bounds_data)
 
-    spatial_html = fig_spatial.to_html(full_html=False, include_plotlyjs="cdn")
+    spatial_html = fig_spatial.to_html(full_html=False, include_plotlyjs=True)
     graph_html = fig_graph.to_html(full_html=False, include_plotlyjs=False)
 
     extra_pairwise_html = ""
@@ -88,10 +86,10 @@ def generate_html_report(bounds_data: dict, output_path: str):
         </div>
         """
 
-    table_headers = "".join([f"<th>{k}</th>" for k in table_rows[0].keys()])
+    table_headers = "".join([f"<th>{escape(str(k))}</th>" for k in (table_rows[0].keys() if table_rows else [])])
     table_body = ""
     for r in table_rows:
-        tds = "".join([f"<td>{v}</td>" for v in r.values()])
+        tds = "".join([f"<td>{escape(str(v))}</td>" for v in r.values()])
         table_body += f"<tr>{tds}</tr>"
 
     html_content = f"""<!DOCTYPE html>
@@ -124,7 +122,7 @@ def generate_html_report(bounds_data: dict, output_path: str):
             {spatial_html}
         </div>
         <div class="card">
-            <h2>Neighbor Graph G = (U(N), ν)</h2>
+            <h2>Contracted Neighbor Graph</h2>
             {graph_html}
         </div>
     </div>
@@ -132,7 +130,7 @@ def generate_html_report(bounds_data: dict, output_path: str):
     {extra_pairwise_html}
 
     <div class="card">
-        <h2>Local Bounds Table U(N)</h2>
+        <h2>Local Bounds Table</h2>
         <table>
             <thead><tr>{table_headers}</tr></thead>
             <tbody>{table_body}</tbody>
@@ -148,8 +146,8 @@ def generate_html_report(bounds_data: dict, output_path: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize Local Bounds in 2D and 3D")
-    parser.add_argument("--dim", type=int, default=3, choices=[2, 3], help="Dimensionality (2 or 3)")
-    parser.add_argument("--preset", type=str, default="paper2", choices=["paper2", "paper1_sa", "paper1_ngp", "2d"], help="Preset dataset")
+    parser.add_argument("--dim", type=int, default=None, choices=[2, 3], help="Dimensionality (2 or 3)")
+    parser.add_argument("--preset", type=str, default="paper2", choices=list(PRESETS), help="Preset dataset")
     parser.add_argument("--points", type=str, default=None, help='Custom JSON points list e.g. "[[4,0,4],[3,3,1],[2,2,2]]"')
     parser.add_argument("--ref", type=str, default=None, help='Reference point M (nadir) e.g. "10,10,10"')
     parser.add_argument("--anti", type=str, default=None, help='Anti-reference point m (ideal) e.g. "0,0,0"')
@@ -165,57 +163,27 @@ def main():
         web_app.app.run(port=args.port, host="127.0.0.1")
         return
 
-    dims = args.dim
-    ref = [10.0] * dims
-    anti = [0.0] * dims
-
-    if args.ref:
-        ref = [float(x.strip()) for x in args.ref.split(",")]
-    if args.anti:
-        anti = [float(x.strip()) for x in args.anti.split(",")]
-
-    points_to_insert = []
-
-    if args.points:
-        raw_pts = json.loads(args.points)
-        for i, coords in enumerate(raw_pts):
-            points_to_insert.append(lb.Point(f"z{i+1}", coords))
-        dims = len(raw_pts[0])
-    elif args.preset == "paper2":
-        dims = 3
-        ref = [10.0, 10.0, 10.0]
-        anti = [0.0, 0.0, 0.0]
-        points_to_insert = [
-            lb.Point("z1", [4.0, 0.0, 4.0]),
-            lb.Point("z2", [3.0, 3.0, 1.0]),
-            lb.Point("z3", [2.0, 2.0, 2.0])
-        ]
-    elif args.preset == "paper1_sa":
-        dims = 3
-        ref = [10.0, 10.0, 10.0]
-        anti = [0.0, 0.0, 0.0]
-        points_to_insert = [
-            lb.Point("z1", [3.0, 7.0, 5.0]),
-            lb.Point("z2", [5.0, 5.0, 4.0])
-        ]
-    elif args.preset == "paper1_ngp":
-        dims = 3
-        ref = [10.0, 10.0, 10.0]
-        anti = [0.0, 0.0, 0.0]
-        points_to_insert = [
-            lb.Point("z1", [4.0, 3.0, 7.0]),
-            lb.Point("z2", [4.0, 5.0, 4.0]),
-            lb.Point("z3", [2.0, 5.0, 7.0])
-        ]
-    elif args.preset == "2d":
-        dims = 2
-        ref = [10.0, 10.0]
-        anti = [0.0, 0.0]
-        points_to_insert = [
-            lb.Point("z1", [3.0, 7.0]),
-            lb.Point("z2", [5.0, 4.0]),
-            lb.Point("z3", [7.0, 2.0])
-        ]
+    sense_str, preset_points = PRESETS[args.preset]
+    sense = lb._normalize_sense(sense_str)
+    try:
+        raw_points = json.loads(args.points) if args.points is not None else preset_points
+        if not isinstance(raw_points, list) or any(not isinstance(coords, list) for coords in raw_points):
+            raise ValueError("Points must be a JSON list of coordinate lists")
+        dims = args.dim or (len(raw_points[0]) if raw_points else 3)
+        if dims not in (2, 3):
+            raise ValueError("Visualizer supports only 2D and 3D")
+        ref = ([float(x.strip()) for x in args.ref.split(",")] if args.ref else
+               [10.0 if sense == lb.Objective.MINIMIZE else 0.0] * dims)
+        anti = ([float(x.strip()) for x in args.anti.split(",")] if args.anti else
+                [0.0 if sense == lb.Objective.MINIMIZE else 10.0] * dims)
+        if len(ref) != dims or len(anti) != dims:
+            raise ValueError("Reference and anti-reference must match dimensions")
+        tracker = vis.LocalBoundsTracker(ref, anti, sense=sense)
+        points_to_insert = [lb.Point(f"z{i+1}", coords) for i, coords in enumerate(raw_points)]
+        for point in points_to_insert:
+            tracker.add_point(point)
+    except (ValueError, TypeError, RuntimeError) as error:
+        parser.error(str(error))
 
     print("===================================================================")
     print(f"  Local Bounds Generator ({dims}D Space)")
@@ -224,9 +192,7 @@ def main():
     print(f"  Points to insert: {len(points_to_insert)}")
     print("===================================================================\n")
 
-    tracker = vis.LocalBoundsTracker(ref, anti)
-    for p in points_to_insert:
-        step = tracker.add_point(p)
+    for step in tracker.steps[1:]:
         if args.step_by_step:
             print(f"--- Step {step.step}: Added Point {step.point_added.id} ({step.point_added.coordinates}) ---")
             print(f"  Bounds destroyed: {step.destroyed_bounds if step.destroyed_bounds else 'None'}")
@@ -236,7 +202,7 @@ def main():
     final_data = tracker.steps[-1].bounds_data
     table = vis.create_bounds_table(final_data)
 
-    print("Final Local Bounds Table U(N):")
+    print("Final Local Bounds Table:")
     print(format_terminal_table(table, dims))
     print(f"\nTotal Local Bounds: {len(table)}\n")
 
