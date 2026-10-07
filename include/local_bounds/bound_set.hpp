@@ -263,6 +263,16 @@ public:
   }
 
 private:
+  bool projection_weakly_dominates(const std::vector<T>& u,
+                                   const std::vector<T>& z, std::size_t j,
+                                   const std::vector<T>& other) const {
+    for (std::size_t k = 0; k < dimensions_; ++k) {
+      if (!detail::is_at_least_as_good<T, Sense>(k == j ? z[j] : u[k], other[k]))
+        return false;
+    }
+    return true;
+  }
+
   bool has_ra_metadata(bool sa) const {
     if (!has_anti_reference()) return false;
     return std::all_of(bounds_.begin(), bounds_.end(), [this, sa](const auto& bound) {
@@ -340,8 +350,6 @@ private:
     if (A_idx.empty())
       return false;
 
-    std::sort(A_idx.begin(), A_idx.end());
-
     // Step 2: Generate candidate bounds and filter out redundant ones
     // immediately
     std::vector<LocalBound<T>> P;
@@ -350,16 +358,13 @@ private:
     for (std::size_t idx : A_idx) {
       const auto &u = current_bounds[idx];
       for (std::size_t j = 0; j < dimensions_; ++j) {
-        std::vector<T> new_coords = u.coordinates;
-        new_coords[j] = point.coordinates[j];
-
         bool dominates = false;
 
         // Filter against A (equivalent to checking P against P but more
         // efficient)
         for (std::size_t a_idx : A_idx) {
           if (a_idx != idx) {
-            if (weakly_dominates<T, Sense>(new_coords,
+            if (projection_weakly_dominates(u.coordinates, point.coordinates, j,
                                            current_bounds[a_idx].coordinates)) {
               dominates = true;
               break;
@@ -371,7 +376,7 @@ private:
         // dimension j)
         if (!dominates) {
           for (std::size_t b_idx : B_idx[j]) {
-            if (weakly_dominates<T, Sense>(new_coords,
+            if (projection_weakly_dominates(u.coordinates, point.coordinates, j,
                                            current_bounds[b_idx].coordinates)) {
               dominates = true;
               break;
@@ -380,6 +385,8 @@ private:
         }
 
         if (!dominates) {
+          std::vector<T> new_coords = u.coordinates;
+          new_coords[j] = point.coordinates[j];
           std::string new_id = u.id + std::to_string(j + 1);
           P.emplace_back(new_id, std::move(new_coords));
         }
@@ -429,8 +436,6 @@ private:
     if (A_idx.empty())
       return false;
 
-    std::sort(A_idx.begin(), A_idx.end());
-
     // Step 2: Build B_j with strict inequality on all non-j dimensions
     std::vector<std::vector<std::size_t>> B_idx(dimensions_);
     for (std::size_t j = 0; j < dimensions_; ++j) {
@@ -465,16 +470,13 @@ private:
     for (std::size_t idx : A_idx) {
       const auto &u = current_bounds[idx];
       for (std::size_t j = 0; j < dimensions_; ++j) {
-        std::vector<T> new_coords = u.coordinates;
-        new_coords[j] = point.coordinates[j];
-
         bool redundant = false;
 
         // Check against other candidates in same P_j (equivalent to checking
         // against A)
         for (std::size_t a_idx : A_idx) {
           if (a_idx != idx) {
-            if (weakly_dominates<T, Sense>(new_coords,
+            if (projection_weakly_dominates(u.coordinates, point.coordinates, j,
                                            current_bounds[a_idx].coordinates)) {
               redundant = true;
               break;
@@ -485,7 +487,7 @@ private:
         // Check against B_j
         if (!redundant) {
           for (std::size_t b_idx : B_idx[j]) {
-            if (weakly_dominates<T, Sense>(new_coords,
+            if (projection_weakly_dominates(u.coordinates, point.coordinates, j,
                                            current_bounds[b_idx].coordinates)) {
               redundant = true;
               break;
@@ -494,6 +496,8 @@ private:
         }
 
         if (!redundant) {
+          std::vector<T> new_coords = u.coordinates;
+          new_coords[j] = point.coordinates[j];
           std::string new_id = u.id + std::to_string(j + 1);
           P[j].emplace_back(new_id, std::move(new_coords));
         }
@@ -771,22 +775,21 @@ private:
   bool _update_naive(std::vector<LocalBound<T>> &current_bounds,
                      const Point<T> &point) {
     // Step 1: Find strongly dominated bounds and their indices
-    std::vector<LocalBound<T>> A;
     std::vector<std::size_t> A_idx;
     for (std::size_t i = 0; i < current_bounds.size(); ++i) {
       if (strictly_dominates<T, Sense>(point.coordinates,
                                        current_bounds[i].coordinates)) {
-        A.push_back(current_bounds[i]);
         A_idx.push_back(i);
       }
     }
 
-    if (A.empty())
+    if (A_idx.empty())
       return false;
 
     // Step 2: Generate all candidate bounds (projections)
     std::vector<LocalBound<T>> new_bounds;
-    for (const auto &u : A) {
+    for (std::size_t idx : A_idx) {
+      const auto &u = current_bounds[idx];
       for (std::size_t j = 0; j < dimensions_; ++j) {
         std::string new_id = u.id + std::to_string(j + 1);
         std::vector<T> new_coords = u.coordinates;
@@ -852,8 +855,9 @@ private:
     }
 
     // Step 5: Add new bounds
-    current_bounds.insert(current_bounds.end(), new_bounds.begin(),
-                          new_bounds.end());
+    current_bounds.insert(current_bounds.end(),
+                          std::make_move_iterator(new_bounds.begin()),
+                          std::make_move_iterator(new_bounds.end()));
     return true;
   }
 };

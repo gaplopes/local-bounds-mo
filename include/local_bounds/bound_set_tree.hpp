@@ -144,13 +144,7 @@ public:
   [[nodiscard]] bool is_in_search_region(const std::vector<T> &point) const {
     detail::validate_coordinates(point, dimensions_);
     if (!detail::in_interval<T, Sense>(point, reference_point_, anti_reference_)) return false;
-    auto all_lubs = tree_.GetAllBounds();
-    for (const auto &lub : all_lubs) {
-      if (strictly_dominates<T, Sense>(point, lub)) {
-        return true;
-      }
-    }
-    return false;
+    return tree_.FindStrictlyDominated(point) != nullptr;
   }
 
   /**
@@ -163,12 +157,9 @@ public:
   find_containing_bound(const std::vector<T> &point) const {
     detail::validate_coordinates(point, dimensions_);
     if (!detail::in_interval<T, Sense>(point, reference_point_, anti_reference_)) return std::nullopt;
-    auto all_lubs = tree_.GetAllBounds();
-    for (size_t i = 0; i < all_lubs.size(); ++i) {
-      if (strictly_dominates<T, Sense>(point, all_lubs[i])) {
-        return LocalBound<T>("u" + std::to_string(i), std::move(all_lubs[i]));
-      }
-    }
+    size_t ordinal = 0;
+    if (const auto *bound = tree_.FindStrictlyDominated(point, &ordinal))
+      return LocalBound<T>("u" + std::to_string(ordinal), *bound);
     return std::nullopt;
   }
 
@@ -207,9 +198,6 @@ private:
         if (!detail::is_better<T, Sense>(z[j], u[j]))
           continue;
 
-        std::vector<T> p_cand = u;
-        p_cand[j] = z[j];
-
         bool dominated = false;
 
         // Filter against A
@@ -217,7 +205,7 @@ private:
           if (i != k) {
             bool cur_dom = true;
             for (std::size_t dim = 0; dim < dimensions_; ++dim) {
-              if (!detail::is_at_least_as_good<T, Sense>(p_cand[dim],
+              if (!detail::is_at_least_as_good<T, Sense>(dim == j ? z[j] : u[dim],
                                                          A[k][dim])) {
                 cur_dom = false;
                 break;
@@ -235,7 +223,7 @@ private:
           for (const auto &w : B[j]) {
             bool p_le_w = true;
             for (std::size_t k = 0; k < dimensions_; ++k) {
-              if (!detail::is_at_least_as_good<T, Sense>(p_cand[k], w[k])) {
+              if (!detail::is_at_least_as_good<T, Sense>(k == j ? z[j] : u[k], w[k])) {
                 p_le_w = false;
                 break;
               }
@@ -247,25 +235,11 @@ private:
           }
         }
 
-        // Filter against P
+        // A already rejects candidates covered by another source's projection.
         if (!dominated) {
-          for (const auto &w : P) {
-            bool p_le_w = true;
-            for (std::size_t k = 0; k < dimensions_; ++k) {
-              if (!detail::is_at_least_as_good<T, Sense>(p_cand[k], w[k])) {
-                p_le_w = false;
-                break;
-              }
-            }
-            if (p_le_w) {
-              dominated = true;
-              break;
-            }
-          }
-        }
-
-        if (!dominated) {
-          P.push_back(p_cand);
+          std::vector<T> p_cand = u;
+          p_cand[j] = z[j];
+          P.push_back(std::move(p_cand));
         }
       }
     }

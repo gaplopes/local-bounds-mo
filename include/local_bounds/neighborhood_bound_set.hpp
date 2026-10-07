@@ -94,7 +94,6 @@ class NeighborhoodBoundSet {
       std::size_t id;
       std::size_t parent_id;
       std::size_t i;
-      std::vector<std::size_t> I;
     };
     std::vector<NewBound> B;
 
@@ -137,7 +136,7 @@ class NeighborhoodBoundSet {
         
         std::size_t ui_idx = allocate_node(std::move(ui_bound));
         nodes_[u_idx].children[i] = ui_idx;
-        B.push_back({ui_idx, u_idx, i, I});
+        B.push_back({ui_idx, u_idx, i});
       }
 
       // Link children with each other and with the i-neighbor
@@ -162,7 +161,7 @@ class NeighborhoodBoundSet {
 
       // Add unvisited j-neighbors to O
       for (std::size_t j = 0; j < dimensions_; ++j) {
-        if (std::find(I.begin(), I.end(), j) == I.end()) {
+        if (nodes_[u_idx].children[j] == npos) {
           std::size_t neighbor_idx = nodes_[u_idx].neighbors[j];
           assert(neighbor_idx != npos); // Guaranteed by Proposition 4.3
           if (!visited[neighbor_idx]) {
@@ -181,7 +180,7 @@ class NeighborhoodBoundSet {
       std::size_t i = new_bound.i;
 
       for (std::size_t j = 0; j < dimensions_; ++j) {
-        if (std::find(new_bound.I.begin(), new_bound.I.end(), j) == new_bound.I.end()) {
+        if (nodes_[u].children[j] == npos) {
           std::size_t u_hat = nodes_[u].neighbors[j];
           assert(u_hat != npos);
           std::size_t r = get_reverse_index(u_hat, u);
@@ -347,33 +346,7 @@ class NeighborhoodBoundSet {
    * @return std::vector<std::size_t> A list of valid, non-redundant neighbor indices.
    */
   [[nodiscard]] std::vector<std::size_t> get_clean_neighbors(std::size_t node_idx) const {
-    if (!is_active(node_idx)) throw std::out_of_range("Node must be active");
-    std::vector<std::size_t> clean_neighbors;
-    std::vector<std::size_t> to_visit;
-    std::vector<bool> visited(nodes_.size(), false);
-    
-    visited[node_idx] = true;
-    for (std::size_t n : nodes_[node_idx].neighbors) {
-      if (n != npos) to_visit.push_back(n);
-    }
-    
-    std::size_t head = 0;
-    while (head < to_visit.size()) {
-      std::size_t curr = to_visit[head++];
-      if (visited[curr]) continue;
-      visited[curr] = true;
-      
-      if (!is_quasi_nonredundant(curr)) {
-        clean_neighbors.push_back(curr);
-      } else {
-        for (std::size_t nn : nodes_[curr].neighbors) {
-          if (nn != npos && !visited[nn]) {
-            to_visit.push_back(nn);
-          }
-        }
-      }
-    }
-    return clean_neighbors;
+    return get_clean_neighbors_impl(node_idx, nullptr);
   }
 
   struct AdjacencyGraph {
@@ -394,16 +367,17 @@ class NeighborhoodBoundSet {
    */
   [[nodiscard]] AdjacencyGraph get_adjacency_graph(bool include_quasi = false) const {
     AdjacencyGraph graph;
+    std::vector<bool> quasi(nodes_.size(), false);
     std::vector<std::size_t> internal_to_dense(nodes_.size(), npos);
     
     // 1. Assign dense IDs to valid non-redundant nodes
     for (std::size_t i = 0; i < nodes_.size(); ++i) {
       if (!nodes_[i].is_active) continue;
-      const bool quasi = is_quasi_nonredundant(i);
-      if (include_quasi || !quasi) {
+      const bool is_quasi = quasi[i] = is_quasi_nonredundant(i);
+      if (include_quasi || !is_quasi) {
         internal_to_dense[i] = graph.nodes.size();
         graph.nodes.push_back(nodes_[i].bound);
-        graph.quasi.push_back(quasi);
+        graph.quasi.push_back(is_quasi);
       }
     }
     
@@ -415,7 +389,7 @@ class NeighborhoodBoundSet {
       if (internal_to_dense[i] != npos) {
         std::size_t dense_u = internal_to_dense[i];
         std::vector<std::size_t> clean_internal = include_quasi
-            ? nodes_[i].neighbors : get_clean_neighbors(i);
+            ? nodes_[i].neighbors : get_clean_neighbors_impl(i, &quasi);
         std::vector<std::size_t> dense_neighbors;
         dense_neighbors.reserve(clean_internal.size());
         for (std::size_t internal_nb : clean_internal) {
@@ -428,7 +402,7 @@ class NeighborhoodBoundSet {
         for (std::size_t k = 0; k < dimensions_; ++k) {
           std::size_t raw_n = nodes_[i].neighbors[k];
           std::size_t hops = 0;
-          while (!include_quasi && raw_n != npos && is_quasi_nonredundant(raw_n)) {
+          while (!include_quasi && raw_n != npos && quasi[raw_n]) {
             if (++hops > nodes_.size()) { raw_n = npos; break; }
             raw_n = nodes_[raw_n].neighbors[k];
           }
@@ -443,6 +417,37 @@ class NeighborhoodBoundSet {
   }
 
  private:
+  [[nodiscard]] std::vector<std::size_t> get_clean_neighbors_impl(
+      std::size_t node_idx, const std::vector<bool>* quasi) const {
+    if (!is_active(node_idx)) throw std::out_of_range("Node must be active");
+    std::vector<std::size_t> clean_neighbors;
+    std::vector<std::size_t> to_visit;
+    std::vector<bool> visited(nodes_.size(), false);
+
+    visited[node_idx] = true;
+    for (std::size_t n : nodes_[node_idx].neighbors) {
+      if (n != npos) to_visit.push_back(n);
+    }
+
+    std::size_t head = 0;
+    while (head < to_visit.size()) {
+      std::size_t curr = to_visit[head++];
+      if (visited[curr]) continue;
+      visited[curr] = true;
+
+      if (!(quasi ? (*quasi)[curr] : is_quasi_nonredundant(curr))) {
+        clean_neighbors.push_back(curr);
+      } else {
+        for (std::size_t nn : nodes_[curr].neighbors) {
+          if (nn != npos && !visited[nn]) {
+            to_visit.push_back(nn);
+          }
+        }
+      }
+    }
+    return clean_neighbors;
+  }
+
   struct Node {
     LocalBound<T> bound;
     std::vector<std::size_t> neighbors;
@@ -492,7 +497,7 @@ class NeighborhoodBoundSet {
    */
   bool is_quasi_nonredundant(std::size_t idx) const {
     const auto& coordinates = nodes_[idx].bound.coordinates;
-    // ponytail: quadratic export filtering; optimize duplicate-component traversal when needed.
+    // ponytail: quadratic global filtering; add a spatial index if classification dominates exports.
     for (std::size_t other = 0; other < nodes_.size(); ++other) {
       if (other == idx || !nodes_[other].is_active) continue;
       const auto& candidate = nodes_[other].bound.coordinates;

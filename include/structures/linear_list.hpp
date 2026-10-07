@@ -4,6 +4,7 @@
 #include "../local_bounds/dominance.hpp"
 #include "../local_bounds/types.hpp"
 #include <cstddef> // for size_t
+#include <utility>
 #include <vector>
 
 namespace local_bounds {
@@ -56,16 +57,18 @@ public:
     }
 
     // y is not covered, add it and remove dominated
-    auto it = archive_.begin();
-    while (it != archive_.end()) {
-      if (dominates<T, Sense>(y, *it)) {
+    size_t kept = 0;
+    for (size_t i = 0; i < archive_.size(); ++i) {
+      if (dominates<T, Sense>(y, archive_[i])) {
         if (pruned)
-          pruned->push_back(*it);
-        it = archive_.erase(it);
+          pruned->push_back(archive_[i]);
       } else {
-        ++it;
+        if (kept != i)
+          archive_[kept] = std::move(archive_[i]);
+        ++kept;
       }
     }
+    archive_.resize(kept);
     archive_.push_back(y);
     return true;
   }

@@ -112,17 +112,46 @@ public:
    */
   [[nodiscard]] size_t Size() const { return item_count_; }
 
+  // Returns the first match in GetAllBounds() order. The pointer remains valid
+  // until the tree is modified; ordinal is its index in that export.
+  [[nodiscard]] const Point *FindStrictlyDominated(const Point &z,
+                                                  size_t *ordinal = nullptr) const {
+    detail::validate_coordinates(z, p_);
+    if (ordinal) *ordinal = 0;
+    return root_ ? FindStrictlyDominatedRecursive(root_, z, ordinal) : nullptr;
+  }
+
   /**
    * @brief Returns a copy of all bounds currently stored in the tree.
    */
   std::vector<Point> GetAllBounds() const {
     std::vector<Point> result;
+    result.reserve(item_count_);
     if (root_)
       GetPointsRecursive(root_, result);
     return result;
   }
 
 private:
+  const Point *FindStrictlyDominatedRecursive(const Node *n, const Point &z,
+                                             size_t *ordinal) const {
+    // Containing queries must count preceding entries to preserve DFS IDs.
+    if (!ordinal && (n->worst_point.empty() || !strictly_inside(z, n->worst_point)))
+      return nullptr;
+    if (n->is_leaf()) {
+      for (const auto &u : n->L) {
+        if (strictly_inside(z, u)) return &u;
+        if (ordinal) ++*ordinal;
+      }
+    } else {
+      for (const auto *child : n->children) {
+        if (const auto *u = FindStrictlyDominatedRecursive(child, z, ordinal))
+          return u;
+      }
+    }
+    return nullptr;
+  }
+
   size_t max_leaf_size_;
   size_t num_children_;
   size_t p_;

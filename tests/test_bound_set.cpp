@@ -12,6 +12,7 @@
 #include <algorithm>
 
 #include "local_bounds.hpp"
+#include "structures/linear_list.hpp"
 
 using namespace local_bounds;
 
@@ -585,6 +586,111 @@ void test_higher_dimensions() {
          sorted_coords(bs_naive.bounds()) == sorted_coords(bs_alg5.bounds()));
 }
 
+
+template<Objective Sense>
+void test_native_order_and_queries() {
+    auto orient = [](std::vector<int64_t> point) {
+        if constexpr (Sense == Objective::MAXIMIZE)
+            for (auto& x : point) x = 100 - x;
+        return point;
+    };
+    const std::vector<std::vector<int64_t>> data{{3,5,7},{3,7,4},{6,5,2},{4,3,6}};
+    const std::vector<LocalBound<int64_t>> expected{
+        {"u01",{3,100,100}}, {"u0331",{6,100,4}}, {"u0333",{100,100,2}},
+        {"u021",{4,5,100}}, {"u022",{100,3,100}}, {"u023",{100,5,6}},
+        {"u03211",{4,7,7}}, {"u03213",{6,7,6}}
+    };
+    const std::vector<std::vector<size_t>> order{
+        {0,1,2,3,4,5,6,7}, {0,1,2,3,6,4,5,7}, {0,2,1,3,4,5,6,7}
+    };
+    for (size_t algorithm = 0; algorithm < order.size(); ++algorithm) {
+        BoundSet<int64_t, Sense> bounds(orient({100,100,100}), orient({0,0,0}));
+        for (size_t i = 0; i < data.size(); ++i) {
+            Point<int64_t> z("z" + std::to_string(i + 1), orient(data[i]));
+            if (algorithm == 0) bounds.update_re(z);
+            else if (algorithm == 1) bounds.update_re_enhanced(z);
+            else bounds.update_naive(z);
+        }
+        bool matches = bounds.size() == expected.size();
+        for (size_t i = 0; matches && i < expected.size(); ++i) {
+            const auto& actual = bounds.bounds()[i];
+            const auto& want = expected[order[algorithm][i]];
+            matches = actual.id == want.id && actual.coordinates == orient(want.coordinates)
+                && actual.defining_points.empty() && actual.defining_point_sets.empty();
+        }
+        TEST("Projection algorithms preserve ordered IDs, coordinates and metadata", matches);
+    }
+
+    BoundSetTree<int64_t, Sense> tree(orient({100,100,100}), orient({0,0,0}), 2, 2);
+    bool query_matches = true, saw_later_match = false;
+    for (size_t step = 0; step < data.size(); ++step) {
+        Point<int64_t> z("z" + std::to_string(step), orient(data[step]));
+        bool updated;
+        if (step == 0) updated = tree.update_re(z);
+        else if (step == 1) updated = tree.update_re_enhanced(z);
+        else if (step == 2) updated = tree.update_naive(z);
+        else updated = tree.update_auto(z);
+        query_matches &= updated && !tree.update_re(z);
+        const auto exported = tree.bounds();
+        query_matches &= exported.size() == tree.size();
+        for (int a = -1; a <= 11; ++a) for (int b = -1; b <= 11; ++b)
+            for (int c = -1; c <= 11; ++c) {
+                const auto q = orient({a,b,c});
+                size_t first = exported.size();
+                if (a >= 0 && b >= 0 && c >= 0) {
+                    for (size_t i = 0; i < exported.size(); ++i)
+                        if (strictly_dominates<int64_t, Sense>(q, exported[i].coordinates)) {
+                            first = i;
+                            break;
+                        }
+                }
+                const bool found = first != exported.size();
+                const auto hit = tree.find_containing_bound(q);
+                query_matches &= tree.is_in_search_region(q) == found && bool(hit) == found;
+                if (hit && found) {
+                    saw_later_match |= first > 0;
+                    query_matches &= hit->id == exported[first].id
+                        && hit->coordinates == exported[first].coordinates
+                        && hit->defining_points.empty() && hit->defining_point_sets.empty();
+                }
+            }
+    }
+    TEST("Split-tree queries preserve the first DFS match and ordinal ID", query_matches && saw_later_match);
+    bool search_error = false, containing_error = false;
+    try { (void)tree.is_in_search_region({}); }
+    catch (const std::invalid_argument&) { search_error = true; }
+    try { (void)tree.find_containing_bound({}); }
+    catch (const std::invalid_argument&) { containing_error = true; }
+    TEST("Direct tree queries retain dimension validation", search_error && containing_error);
+}
+
+template<Objective Sense>
+void test_linear_list_compaction() {
+    auto orient = [](std::vector<int64_t> point) {
+        if constexpr (Sense == Objective::MAXIMIZE)
+            for (auto& x : point) x = 10 - x;
+        return point;
+    };
+    LinearList<int64_t, Sense> archive(3);
+    for (auto point : std::vector<std::vector<int64_t>>{
+            {1,9,5},{3,7,8},{5,5,3},{7,3,8},{9,1,5}})
+        archive.Update(orient(point));
+    std::vector<std::vector<int64_t>> pruned{orient({42,42,42})};
+    const bool inserted = archive.Update(orient({2,2,4}), &pruned);
+    const std::vector<std::vector<int64_t>> expected{
+        orient({1,9,5}), orient({5,5,3}), orient({9,1,5}), orient({2,2,4})};
+    const std::vector<std::vector<int64_t>> expected_pruned{
+        orient({42,42,42}), orient({3,7,8}), orient({7,3,8})};
+    TEST("Linear compaction preserves survivor and appended-pruned order",
+         inserted && archive.GetPoints() == expected && pruned == expected_pruned);
+    TEST("Covered list point rejects before mutation",
+         !archive.Update(orient({6,6,6}), &pruned)
+         && archive.GetPoints() == expected && pruned == expected_pruned);
+    const std::vector<std::vector<int64_t>> final{orient({0,0,0})};
+    TEST("Compaction without pruning output removes every covered point",
+         archive.Update(orient({0,0,0})) && archive.GetPoints() == final);
+}
+
 int main() {
     std::cout << "===========================================\n";
     std::cout << "  BoundSet Test Suite\n";
@@ -606,6 +712,10 @@ int main() {
     test_maximization_all_algorithms();
     test_higher_dimensions();
     test_algorithm_consistency();
+    test_native_order_and_queries<Objective::MINIMIZE>();
+    test_native_order_and_queries<Objective::MAXIMIZE>();
+    test_linear_list_compaction<Objective::MINIMIZE>();
+    test_linear_list_compaction<Objective::MAXIMIZE>();
 
     std::cout << "\n===========================================\n";
     std::cout << "  RESULTS: " << tests_passed << " passed, " 
