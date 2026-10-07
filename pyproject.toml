@@ -31,4 +31,4 @@ cmake.args = [
     "-DBUILD_BENCHMARK=OFF"
 ]
 build.targets = ["_core"]
-wheel.packages = ["python/local_bounds"]
+wheel.packages = ["python/local_bounds", "visualization"]
