@@ -165,7 +165,7 @@ class AppState:
 
 
 state = AppState()
-# ponytail: serialize the shared research session; use per-session snapshots if throughput matters.
+# TODO: serialize the shared research session; use per-session snapshots if throughput matters.
 state_lock = RLock()
 
 

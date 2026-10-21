@@ -213,15 +213,16 @@ void test_update_return_value() {
 
   NeighborhoodBoundSet<int64_t> nbs(M, m);
 
-  // Valid point in search region -> returns true
-  bool r1 = nbs.update(IntPoint("z1", {4, 0, 4}));
-  CHECK(r1);
+  // Valid point in search region returns true and the removed initial bound.
+  auto r1 = nbs.update(IntPoint("z1", {4, 0, 4}));
+  CHECK(r1.first);
+  CHECK(r1.second.size() == 1 && r1.second[0].id == "u0");
   (void)r1;
 
-  // Dominated point (5, 5, 5) is outside search region -> returns false, bounds unchanged
+  // Dominated point (5, 5, 5) returns {false, {}}, leaving bounds unchanged.
   size_t size_before = nbs.size();
-  bool r_dom = nbs.update(IntPoint("z_dom", {5, 5, 5}));
-  CHECK(!r_dom);
+  auto r_dom = nbs.update(IntPoint("z_dom", {5, 5, 5}));
+  CHECK(!r_dom.first && r_dom.second.empty());
   CHECK(nbs.size() == size_before);
   (void)size_before;
   (void)r_dom;
@@ -240,7 +241,7 @@ void test_tied_graph_export() {
   for (std::size_t i = 0; i < points.size(); ++i) {
     auto coordinates = points[i];
     if (!minimize) for (auto& coordinate : coordinates) coordinate = 6 - coordinate;
-    CHECK(nbs.update(IntPoint("z" + std::to_string(i), coordinates)));
+    CHECK(nbs.update(IntPoint("z" + std::to_string(i), coordinates)).first);
     // Export between updates to catch classifications retained across mutations.
     CHECK(nbs.get_adjacency_graph().nodes.size() == nbs.nonredundant_size());
   }

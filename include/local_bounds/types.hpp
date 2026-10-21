@@ -16,6 +16,7 @@
 #include <cassert>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 #include <stdexcept>
 
@@ -222,6 +223,10 @@ struct LocalBound {
     return oss.str();
   }
 };
+
+/// Update status and owned snapshots of the strictly dominated old bounds.
+template <typename T>
+using UpdateResult = std::pair<bool, std::vector<LocalBound<T>>>;
 
 }  // namespace local_bounds
 

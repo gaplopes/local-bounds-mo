@@ -70,19 +70,19 @@ public:
    * @brief Updates using Algorithm 2 (Redundancy Elimination).
    *
    * @param point The new nondominated point.
-   * @return true if the bound set was updated, false if the point did not
-   * dominate any local bound.
+   * @return Update status and owned snapshots of the strictly dominated old
+   * bounds. Returns {false, {}} if unchanged.
    */
-  bool update_re(const Point<T> &point) { return update_re_impl(point); }
+  UpdateResult<T> update_re(const Point<T> &point) { return update_re_impl(point); }
 
   /**
    * @brief API-compatible alias of this class's indexed RE implementation.
    *
    * @param point The new nondominated point.
-   * @return true if the bound set was updated, false if the point did not
-   * dominate any local bound.
+   * @return Update status and owned snapshots of the strictly dominated old
+   * bounds. Returns {false, {}} if unchanged.
    */
-  bool update_re_enhanced(const Point<T> &point) {
+  UpdateResult<T> update_re_enhanced(const Point<T> &point) {
     return update_re_impl(point);
   }
 
@@ -93,10 +93,10 @@ public:
    * performs filtering during generation.
    *
    * @param point The new nondominated point.
-   * @return true if the bound set was updated, false if the point did not
-   * dominate any local bound.
+   * @return Update status and owned snapshots of the strictly dominated old
+   * bounds. Returns {false, {}} if unchanged.
    */
-  bool update_naive(const Point<T> &point) { return update_re(point); }
+  UpdateResult<T> update_naive(const Point<T> &point) { return update_re(point); }
 
   /**
    * @brief Automatically selects the best update algorithm.
@@ -104,10 +104,10 @@ public:
    * Always dispatches to update_re_enhanced for the tree-based implementation.
    *
    * @param point The new nondominated point.
-   * @return true if the bound set was updated, false if the point did not
-   * dominate any local bound.
+   * @return Update status and owned snapshots of the strictly dominated old
+   * bounds. Returns {false, {}} if unchanged.
    */
-  bool update_auto(const Point<T> &point) { return update_re_enhanced(point); }
+  UpdateResult<T> update_auto(const Point<T> &point) { return update_re_enhanced(point); }
 
   /**
    * @brief Returns the current set of local bounds.
@@ -175,13 +175,14 @@ private:
    * Both algorithms share the same tree-based implementation since the
    * LBTree handles the spatial indexing uniformly.
    */
-  bool update_re_impl(const Point<T> &point) {
+  UpdateResult<T> update_re_impl(const Point<T> &point) {
     detail::validate_update<T, Sense>(point.coordinates, reference_point_, anti_reference_);
     const auto &z = point.coordinates;
-    std::vector<std::vector<T>> A = tree_.ExtractStrictlyDominated(z);
+    std::vector<std::size_t> ordinals;
+    std::vector<std::vector<T>> A = tree_.ExtractStrictlyDominated(z, &ordinals);
 
     if (A.empty())
-      return false;
+      return {false, {}};
 
     // Extract B_j
     std::vector<std::vector<std::vector<T>>> B(dimensions_);
@@ -248,7 +249,12 @@ private:
     for (const auto &p_cand : P) {
       tree_.Insert(p_cand);
     }
-    return true;
+    std::vector<LocalBound<T>> dominated_bounds;
+    dominated_bounds.reserve(A.size());
+    for (std::size_t i = 0; i < A.size(); ++i) {
+      dominated_bounds.emplace_back("u" + std::to_string(ordinals[i]), std::move(A[i]));
+    }
+    return {true, std::move(dominated_bounds)};
   }
 };
 

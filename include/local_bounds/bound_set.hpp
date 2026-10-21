@@ -102,10 +102,10 @@ public:
    * Implements Algorithm 2 (Redundancy Elimination) from the paper.
    *
    * @param point The new nondominated point.
-   * @return true if the bound set was updated, false if the point did not
-   * dominate any local bound.
+   * @return Update status and owned snapshots of the strictly dominated old
+   * bounds. Returns {false, {}} if unchanged.
    */
-  bool update_re(const Point<T> &point) {
+  UpdateResult<T> update_re(const Point<T> &point) {
     detail::validate_update<T, Sense>(point.coordinates, reference_point_, anti_reference_);
     return update_redundancy_elimination(bounds_, point);
   }
@@ -116,10 +116,10 @@ public:
    * Implements Algorithm 3 (Enhanced Redundancy Elimination) from the paper.
    *
    * @param point The new nondominated point.
-   * @return true if the bound set was updated, false if the point did not
-   * dominate any local bound.
+   * @return Update status and owned snapshots of the strictly dominated old
+   * bounds. Returns {false, {}} if unchanged.
    */
-  bool update_re_enhanced(const Point<T> &point) {
+  UpdateResult<T> update_re_enhanced(const Point<T> &point) {
     detail::validate_update<T, Sense>(point.coordinates, reference_point_, anti_reference_);
     return update_redundancy_elimination_enhanced(bounds_, point);
   }
@@ -133,10 +133,10 @@ public:
    * additional information to directly generate only non-redundant bounds.
    *
    * @param point The new nondominated point.
-   * @return true if the bound set was updated, false if the point did not
-   * dominate any local bound.
+   * @return Update status and owned snapshots of the strictly dominated old
+   * bounds. Returns {false, {}} if unchanged.
    */
-  bool update_ra_sa(const Point<T> &point) {
+  UpdateResult<T> update_ra_sa(const Point<T> &point) {
     detail::validate_update<T, Sense>(point.coordinates, reference_point_, anti_reference_);
     validate_ra(point, true);
     return update_redundancy_avoidance_sa(bounds_, point);
@@ -151,10 +151,10 @@ public:
    * bound.
    *
    * @param point The new nondominated point.
-   * @return true if the bound set was updated, false if the point did not
-   * dominate any local bound.
+   * @return Update status and owned snapshots of the strictly dominated old
+   * bounds. Returns {false, {}} if unchanged.
    */
-  bool update_ra(const Point<T> &point) {
+  UpdateResult<T> update_ra(const Point<T> &point) {
     detail::validate_update<T, Sense>(point.coordinates, reference_point_, anti_reference_);
     validate_ra(point, false);
     return update_redundancy_avoidance(bounds_, point);
@@ -177,10 +177,10 @@ public:
    * has been discarded or the point lies on the anti-reference boundary.
    *
    * @param point The new nondominated point.
-   * @return true if the bound set was updated, false if the point did not
-   * dominate any local bound.
+   * @return Update status and owned snapshots of the strictly dominated old
+   * bounds. Returns {false, {}} if unchanged.
    */
-  bool update_auto(const Point<T> &point) {
+  UpdateResult<T> update_auto(const Point<T> &point) {
     detail::validate_update<T, Sense>(point.coordinates, reference_point_, anti_reference_);
     if (dimensions_ >= 6 && has_ra_metadata(false) &&
         strictly_dominates<T, Sense>(anti_reference_, point.coordinates)) {
@@ -198,10 +198,10 @@ public:
    * correctness verification of the more efficient algorithms.
    *
    * @param point The new nondominated point.
-   * @return true if the bound set was updated, false if the point did not
-   * dominate any local bound.
+   * @return Update status and owned snapshots of the strictly dominated old
+   * bounds. Returns {false, {}} if unchanged.
    */
-  bool update_naive(const Point<T> &point) {
+  UpdateResult<T> update_naive(const Point<T> &point) {
     detail::validate_update<T, Sense>(point.coordinates, reference_point_, anti_reference_);
     return _update_naive(bounds_, point);
   }
@@ -317,8 +317,8 @@ private:
    * @param current_bounds Current set of local bounds (modified in place).
    * @param point New point z̄.
    */
-  bool update_redundancy_elimination(std::vector<LocalBound<T>> &current_bounds,
-                                     const Point<T> &point) {
+  UpdateResult<T> update_redundancy_elimination(
+      std::vector<LocalBound<T>> &current_bounds, const Point<T> &point) {
     // Step 1: Find strongly dominated bounds (Set A) and weakly dominated
     // bounds (Set B) A contains bounds strictly dominated by the point (z < u)
     // B contains bounds weakly dominated by the point (z <= u, but not z < u)
@@ -348,7 +348,7 @@ private:
 
     // If no search zones contain the new point, the bound set is unaffected
     if (A_idx.empty())
-      return false;
+      return {false, {}};
 
     // Step 2: Generate candidate bounds and filter out redundant ones
     // immediately
@@ -396,7 +396,10 @@ private:
     // Step 3: Remove the original dominated bounds (Set A) from current_bounds
     // Because A_idx was populated in ascending order, reverse iteration is
     // perfectly safe here.
+    std::vector<LocalBound<T>> dominated_bounds;
+    dominated_bounds.reserve(A_idx.size());
     for (auto it = A_idx.rbegin(); it != A_idx.rend(); ++it) {
+      dominated_bounds.push_back(std::move(current_bounds[*it]));
       std::swap(current_bounds[*it], current_bounds.back());
       current_bounds.pop_back();
     }
@@ -405,7 +408,7 @@ private:
     current_bounds.insert(current_bounds.end(),
                           std::make_move_iterator(P.begin()),
                           std::make_move_iterator(P.end()));
-    return true;
+    return {true, std::move(dominated_bounds)};
   }
 
   /**
@@ -421,7 +424,7 @@ private:
    * @param current_bounds Current set of local bounds (modified in place).
    * @param point New point z̄.
    */
-  bool update_redundancy_elimination_enhanced(
+  UpdateResult<T> update_redundancy_elimination_enhanced(
       std::vector<LocalBound<T>> &current_bounds, const Point<T> &point) {
     // Step 1: Find A (strictly dominated bounds)
     std::vector<std::size_t> A_idx;
@@ -434,7 +437,7 @@ private:
     }
 
     if (A_idx.empty())
-      return false;
+      return {false, {}};
 
     // Step 2: Build B_j with strict inequality on all non-j dimensions
     std::vector<std::vector<std::size_t>> B_idx(dimensions_);
@@ -505,7 +508,10 @@ private:
     }
 
     // Step 4: U' = (U \ A) ∪ (⋃_j P_j)
+    std::vector<LocalBound<T>> dominated_bounds;
+    dominated_bounds.reserve(A_idx.size());
     for (auto it = A_idx.rbegin(); it != A_idx.rend(); ++it) {
+      dominated_bounds.push_back(std::move(current_bounds[*it]));
       std::swap(current_bounds[*it], current_bounds.back());
       current_bounds.pop_back();
     }
@@ -521,7 +527,7 @@ private:
                             std::make_move_iterator(pj.begin()),
                             std::make_move_iterator(pj.end()));
     }
-    return true;
+    return {true, std::move(dominated_bounds)};
   }
 
   /**
@@ -534,7 +540,7 @@ private:
    * @param def_sets Current defining sets (modified in place).
    * @param point New point z̄.
    */
-  bool
+  UpdateResult<T>
   update_redundancy_avoidance_sa(std::vector<LocalBound<T>> &current_bounds,
                                  const Point<T> &z_bar) {
     // Step 1: A ← {u ∈ U(N) : z̄ < u}
@@ -548,7 +554,7 @@ private:
     }
 
     if (A_idx.empty())
-      return false;
+      return {false, {}};
 
     // Step 2: P ← ∅
     std::vector<LocalBound<T>> P;
@@ -611,14 +617,17 @@ private:
     }
 
     // Step 11: U(N ∪ {z̄}) ← (U(N) \ A) ∪ P
+    std::vector<LocalBound<T>> dominated_bounds;
+    dominated_bounds.reserve(A_idx.size());
     for (auto it = A_idx.rbegin(); it != A_idx.rend(); ++it) {
+      dominated_bounds.push_back(std::move(current_bounds[*it]));
       std::swap(current_bounds[*it], current_bounds.back());
       current_bounds.pop_back();
     }
     current_bounds.insert(current_bounds.end(),
                           std::make_move_iterator(P.begin()),
                           std::make_move_iterator(P.end()));
-    return true;
+    return {true, std::move(dominated_bounds)};
   }
 
   /**
@@ -632,8 +641,8 @@ private:
    * @param def_sets Current defining sets (modified in place).
    * @param point New point z̄.
    */
-  bool update_redundancy_avoidance(std::vector<LocalBound<T>> &current_bounds,
-                                   const Point<T> &z_bar) {
+  UpdateResult<T> update_redundancy_avoidance(
+      std::vector<LocalBound<T>> &current_bounds, const Point<T> &z_bar) {
     // Step 1: A ← {u ∈ U(N) : z̄ < u}
     std::vector<std::size_t> A_idx;
     A_idx.reserve(current_bounds.size());
@@ -645,7 +654,7 @@ private:
     }
 
     if (A_idx.empty())
-      return false;
+      return {false, {}};
 
     // Steps 3–4: Update Z^j(u) for ALL bounds u ∈ U(N)
     // Per Proposition 4.1: if z̄_j = u_j and z̄_{-j} < u_{-j}, add z̄ to Z^j(u)
@@ -753,14 +762,17 @@ private:
     }
 
     // Step 13: U(N ∪ {z̄}) ← (U(N) \ A) ∪ P
+    std::vector<LocalBound<T>> dominated_bounds;
+    dominated_bounds.reserve(A_idx.size());
     for (auto it = A_idx.rbegin(); it != A_idx.rend(); ++it) {
+      dominated_bounds.push_back(std::move(current_bounds[*it]));
       std::swap(current_bounds[*it], current_bounds.back());
       current_bounds.pop_back();
     }
     current_bounds.insert(current_bounds.end(),
                           std::make_move_iterator(P.begin()),
                           std::make_move_iterator(P.end()));
-    return true;
+    return {true, std::move(dominated_bounds)};
   }
 
   /**
@@ -772,8 +784,8 @@ private:
    * @param current_bounds Current set of local bounds (modified in place).
    * @param point New point z̄.
    */
-  bool _update_naive(std::vector<LocalBound<T>> &current_bounds,
-                     const Point<T> &point) {
+  UpdateResult<T> _update_naive(std::vector<LocalBound<T>> &current_bounds,
+                               const Point<T> &point) {
     // Step 1: Find strongly dominated bounds and their indices
     std::vector<std::size_t> A_idx;
     for (std::size_t i = 0; i < current_bounds.size(); ++i) {
@@ -784,7 +796,7 @@ private:
     }
 
     if (A_idx.empty())
-      return false;
+      return {false, {}};
 
     // Step 2: Generate all candidate bounds (projections)
     std::vector<LocalBound<T>> new_bounds;
@@ -799,7 +811,10 @@ private:
     }
 
     // Step 3: Remove dominated bounds from current_bounds
+    std::vector<LocalBound<T>> dominated_bounds;
+    dominated_bounds.reserve(A_idx.size());
     for (auto it = A_idx.rbegin(); it != A_idx.rend(); ++it) {
+      dominated_bounds.push_back(std::move(current_bounds[*it]));
       std::swap(current_bounds[*it], current_bounds.back());
       current_bounds.pop_back();
     }
@@ -858,7 +873,7 @@ private:
     current_bounds.insert(current_bounds.end(),
                           std::make_move_iterator(new_bounds.begin()),
                           std::make_move_iterator(new_bounds.end()));
-    return true;
+    return {true, std::move(dominated_bounds)};
   }
 };
 

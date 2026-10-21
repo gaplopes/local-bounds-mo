@@ -182,8 +182,8 @@ void print_bound_set_delta(
 
 template <
     Objective Sense,
-    bool (BoundSet<int64_t, Sense>::*UpdateA)(const Point<int64_t>&),
-    bool (BoundSet<int64_t, Sense>::*UpdateB)(const Point<int64_t>&)>
+    UpdateResult<int64_t> (BoundSet<int64_t, Sense>::*UpdateA)(const Point<int64_t>&),
+    UpdateResult<int64_t> (BoundSet<int64_t, Sense>::*UpdateB)(const Point<int64_t>&)>
 bool compare_iteration_by_iteration(
     std::ostream& out,
     const std::string& a_name,
@@ -265,7 +265,7 @@ bool compare_all_algorithms_bounds_set(
 
 template <Objective Sense,
           typename BoundSetType,
-          bool (BoundSetType::*UpdateMethod)(const Point<int64_t>&)>
+          UpdateResult<int64_t> (BoundSetType::*UpdateMethod)(const Point<int64_t>&)>
 BenchmarkResult run_benchmark(
     const std::string& name,
     const std::string& sense_str,
@@ -279,14 +279,7 @@ BenchmarkResult run_benchmark(
   BoundSetType tmp(std::vector<int64_t>(dimensions, ref_val),
                    std::vector<int64_t>(dimensions, anti_ref_val));
   for (const auto& point : points) {
-    std::size_t A_size = 0;
-    for (const auto& b : tmp.bounds()) {
-      if (strictly_dominates<int64_t, Sense>(point.coordinates, b.coordinates)) {
-        ++A_size;
-      }
-    }
-    total_A += A_size;
-    (tmp.*UpdateMethod)(point);
+    total_A += (tmp.*UpdateMethod)(point).second.size();
   }
 
   // Second pass: timed execution (pure algorithm time)

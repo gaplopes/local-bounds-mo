@@ -96,7 +96,7 @@ NeighborhoodBoundSet<double, Objective::MINIMIZE> bounds(
     {  0.0,   0.0,   0.0}   // ideal (anti-reference)
 );
 
-bounds.update(Point<double>("z1", {30.0, 70.0, 50.0}));
+auto [updated, dominated_bounds] = bounds.update(Point<double>("z1", {30.0, 70.0, 50.0}));
 bounds.update(Point<double>("z2", {50.0, 50.0, 40.0}));
 
 // Get bounds (all, including quasi-nonredundant in NGP case)
@@ -178,7 +178,7 @@ from local_bounds import BoundSet, NeighborhoodBoundSet, Point, Objective
 # BoundSet with sense parameter (defaults to MINIMIZE)
 bs = BoundSet([100.0, 100.0, 100.0], sense=Objective.MINIMIZE)
 
-bs.update_auto(Point("z1", [30.0, 70.0, 50.0]))
+updated, dominated_bounds = bs.update_auto(Point("z1", [30.0, 70.0, 50.0]))
 bs.update_auto(Point("z2", [50.0, 50.0, 40.0]))
 
 print(f"Number of bounds: {bs.size()}")
@@ -320,6 +320,34 @@ Available presets: `debug`, `release`, `dev` (see [CMakePresets.json](CMakePrese
 
 ## API
 
+Every update method returns `UpdateResult<T>`, an alias for
+`std::pair<bool, std::vector<LocalBound<T>>>`. Python returns the equivalent
+`(updated, dominated_bounds)` tuple. `updated` is true exactly when the list is
+nonempty; a no-op returns `{false, {}}` in C++ or `(False, [])` in Python.
+
+The list contains owned snapshots of all existing local bounds strictly dominated
+by the incoming point, with their IDs, coordinates, and available defining-point
+metadata before removal. Later updates do not change these snapshots. The list
+order is unspecified. Neighborhood results include affected quasi-nonredundant
+bounds. Tree results use the IDs from the pre-update `bounds()` export; tree IDs
+are assigned on export and do not remain stable across updates.
+
+This changes the previous boolean return type. Unpack the result before checking
+success: Python treats even `(False, [])` as truthy.
+
+```cpp
+auto [updated, dominated_bounds] = bounds.update_auto(point);
+if (updated) {
+    std::cout << dominated_bounds.size() << " old bounds removed\n";
+}
+```
+
+```python
+updated, dominated_bounds = bounds.update_auto(point)
+if updated:
+    print(f"{len(dominated_bounds)} old bounds removed")
+```
+
 ### NeighborhoodBoundSet (Algorithm 1 — Paper 2)
 
 ```cpp
@@ -329,7 +357,7 @@ class NeighborhoodBoundSet {
     NeighborhoodBoundSet(const std::vector<T>& reference_point,
                          const std::vector<T>& anti_reference);
     
-    bool update(const Point<T>& point);                       // Full-storage lookup + neighborhood traversal
+    UpdateResult<T> update(const Point<T>& point);                       // Full-storage lookup + neighborhood traversal
     
     std::vector<LocalBound<T>> bounds() const;                // All bounds (incl. quasi-nonredundant)
     std::vector<LocalBound<T>> nonredundant_bounds() const;   // Excludes quasi-nonredundant
@@ -353,12 +381,12 @@ class BoundSet {
     BoundSet(const std::vector<T>& reference_point,
              const std::vector<T>& anti_reference);
     
-    bool update_auto(const Point<T>& point);            // Auto-select best algorithm based on p
-    bool update_naive(const Point<T>& point);           // Naive
-    bool update_re(const Point<T>& point);              // Algorithm 2 (RE)
-    bool update_re_enhanced(const Point<T>& point);     // Algorithm 3 (Enhanced RE)
-    bool update_ra_sa(const Point<T>& point);           // Algorithm 4 (RA, General Position)
-    bool update_ra(const Point<T>& point);              // Algorithm 5 (RA, General Case)
+    UpdateResult<T> update_auto(const Point<T>& point);            // Auto-select best algorithm based on p
+    UpdateResult<T> update_naive(const Point<T>& point);           // Naive
+    UpdateResult<T> update_re(const Point<T>& point);              // Algorithm 2 (RE)
+    UpdateResult<T> update_re_enhanced(const Point<T>& point);     // Algorithm 3 (Enhanced RE)
+    UpdateResult<T> update_ra_sa(const Point<T>& point);           // Algorithm 4 (RA, General Position)
+    UpdateResult<T> update_ra(const Point<T>& point);              // Algorithm 5 (RA, General Case)
     
     const std::vector<LocalBound<T>>& bounds() const;
     std::size_t size() const;
@@ -378,10 +406,10 @@ class BoundSetTree {
     // Requires reference point (and optionally anti-reference, max_leaf_size, num_children)
     BoundSetTree(const std::vector<T>& reference_point);
     
-    bool update_auto(const Point<T>& point);            // Delegates to update_re_enhanced
-    bool update_naive(const Point<T>& point);           // Delegates to update_re
-    bool update_re(const Point<T>& point);              // Algorithm 2 (RE) accelerated by LBTree
-    bool update_re_enhanced(const Point<T>& point);     // Alias of tree RE
+    UpdateResult<T> update_auto(const Point<T>& point);            // Delegates to update_re_enhanced
+    UpdateResult<T> update_naive(const Point<T>& point);           // Delegates to update_re
+    UpdateResult<T> update_re(const Point<T>& point);              // Algorithm 2 (RE) accelerated by LBTree
+    UpdateResult<T> update_re_enhanced(const Point<T>& point);     // Alias of tree RE
     
     std::vector<LocalBound<T>> bounds() const;
     std::size_t size() const;
@@ -408,12 +436,12 @@ The Python package exposes the same classes through a unified API where the `sen
 ```python
 class BoundSet:
     def __init__(self, reference_point, anti_reference=None, sense=Objective.MINIMIZE): ...
-    def update_auto(self, point): ...
-    def update_re(self, point): ...
-    def update_re_enhanced(self, point): ...
-    def update_ra_sa(self, point): ...
-    def update_ra(self, point): ...
-    def update_naive(self, point): ...
+    def update_auto(self, point) -> tuple[bool, list[LocalBound]]: ...
+    def update_re(self, point) -> tuple[bool, list[LocalBound]]: ...
+    def update_re_enhanced(self, point) -> tuple[bool, list[LocalBound]]: ...
+    def update_ra_sa(self, point) -> tuple[bool, list[LocalBound]]: ...
+    def update_ra(self, point) -> tuple[bool, list[LocalBound]]: ...
+    def update_naive(self, point) -> tuple[bool, list[LocalBound]]: ...
     def size(self) -> int: ...
     def dimensions(self) -> int: ...
     def is_in_search_region(self, point: list[float]) -> bool: ...
@@ -422,7 +450,7 @@ class BoundSet:
 
 class NeighborhoodBoundSet:
     def __init__(self, reference_point, anti_reference, sense=Objective.MINIMIZE): ...
-    def update(self, point): ...
+    def update(self, point) -> tuple[bool, list[LocalBound]]: ...
     def size(self) -> int: ...
     def nonredundant_size(self) -> int: ...
     def dimensions(self) -> int: ...
@@ -435,10 +463,10 @@ class NeighborhoodBoundSet:
 class BoundSetTree:
     def __init__(self, reference_point, anti_reference=None, max_leaf_size=32,
                  num_children=8, sense=Objective.MINIMIZE): ...
-    def update_auto(self, point): ...
-    def update_re(self, point): ...
-    def update_re_enhanced(self, point): ...
-    def update_naive(self, point): ...
+    def update_auto(self, point) -> tuple[bool, list[LocalBound]]: ...
+    def update_re(self, point) -> tuple[bool, list[LocalBound]]: ...
+    def update_re_enhanced(self, point) -> tuple[bool, list[LocalBound]]: ...
+    def update_naive(self, point) -> tuple[bool, list[LocalBound]]: ...
     def size(self) -> int: ...
     def dimensions(self) -> int: ...
     def is_in_search_region(self, point: list[float]) -> bool: ...

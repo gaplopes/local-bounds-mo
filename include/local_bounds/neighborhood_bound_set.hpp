@@ -63,10 +63,10 @@ class NeighborhoodBoundSet {
    * Implements Algorithm 1 from the paper.
    *
    * @param z_bar The new nondominated point.
-   * @return true if the bound set was updated, false if the point did not
-   * dominate any local bound.
+   * @return Update status and owned snapshots of the strictly dominated old
+   * bounds, including quasi-nonredundant bounds. Returns {false, {}} if unchanged.
    */
-  bool update(const Point<T>& z_bar) {
+  UpdateResult<T> update(const Point<T>& z_bar) {
     detail::validate_update<T, Sense>(z_bar.coordinates, reference_point_, anti_reference_);
 
     // 1. Find an initial bound u_bar such that z_bar < u_bar
@@ -79,7 +79,7 @@ class NeighborhoodBoundSet {
     }
     
     // If no search zone contains the new point, the bound set is unaffected
-    if (u_bar_idx == npos) return false;
+    if (u_bar_idx == npos) return {false, {}};
 
     std::size_t original_size = nodes_.size();
     std::vector<std::size_t> O;
@@ -204,10 +204,13 @@ class NeighborhoodBoundSet {
     }
 
     // 4. Cleanup affected bounds
+    std::vector<LocalBound<T>> dominated_bounds;
+    dominated_bounds.reserve(visited_indices.size());
     for (std::size_t idx : visited_indices) {
+      dominated_bounds.push_back(std::move(nodes_[idx].bound));
       free_node(idx);
     }
-    return true;
+    return {true, std::move(dominated_bounds)};
   }
 
   /**
@@ -497,7 +500,7 @@ class NeighborhoodBoundSet {
    */
   bool is_quasi_nonredundant(std::size_t idx) const {
     const auto& coordinates = nodes_[idx].bound.coordinates;
-    // ponytail: quadratic global filtering; add a spatial index if classification dominates exports.
+    // TODO: quadratic global filtering; add a spatial index if classification dominates exports.
     for (std::size_t other = 0; other < nodes_.size(); ++other) {
       if (other == idx || !nodes_[other].is_active) continue;
       const auto& candidate = nodes_[other].bound.coordinates;

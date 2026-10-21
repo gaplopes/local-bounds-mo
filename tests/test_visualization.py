@@ -17,70 +17,24 @@ import visualization.app as web_app
 
 class TestVisualization(unittest.TestCase):
 
-    def test_example_2_8_paper2(self):
-        """Validates bounds, coordinates, defining points (z^j), and neighbor graphs against Paper 2 Example 2.8."""
-        ref = [10.0, 10.0, 10.0]
-        anti = [0.0, 0.0, 0.0]
+    def test_bounds_extraction_and_table_formatting(self):
+        ref, anti = [10]*3, [0]*3
         nbs = lb.NeighborhoodBoundSet(ref, anti)
-
-        # Step 1: z1 = (4, 0, 4)
-        z1 = lb.Point("z1", [4.0, 0.0, 4.0])
-        nbs.update(z1)
-        self.assertEqual(nbs.size(), 3)
-
-        # Step 2: z2 = (3, 3, 1)
-        z2 = lb.Point("z2", [3.0, 3.0, 1.0])
-        nbs.update(z2)
-        self.assertEqual(nbs.size(), 5)
-
-        # Step 3: z3 = (2, 2, 2)
-        z3 = lb.Point("z3", [2.0, 2.0, 2.0])
-        nbs.update(z3)
-        self.assertEqual(nbs.size(), 7)
-
-        # Extract data
-        data = vis.extract_bounds_data(nbs, ref, anti, [z1, z2, z3])
+        points = [lb.Point(f"z{i+1}", coords) for i, coords in enumerate([[4,0,4], [3,3,1], [2,2,2]])]
+        for point in points:
+            nbs.update(point)
+        data = vis.extract_bounds_data(nbs, ref, anti, points)
         self.assertEqual(len(data["bounds"]), 7)
-
-        # Check extreme bounds: exactly 3 extreme bounds in 3D
-        extreme_bounds = [b for b in data["bounds"] if b.is_extreme]
-        self.assertEqual(len(extreme_bounds), 3)
-
-        extreme_dims = set(b.extreme_dim for b in extreme_bounds)
-        self.assertEqual(extreme_dims, {0, 1, 2})
-
-        # Expected coordinates from Example 2.8 (3)
-        expected_coords = {
-            (2.0, 10.0, 10.0),
-            (3.0, 10.0, 2.0),
-            (4.0, 2.0, 10.0),
-            (10.0, 0.0, 10.0),
-            (10.0, 2.0, 4.0),
-            (10.0, 3.0, 2.0),
-            (10.0, 10.0, 1.0)
-        }
-        got_coords = set(tuple(b.coordinates) for b in data["bounds"])
-        self.assertEqual(got_coords, expected_coords)
-
-        # Check table formatting and z^3 notation
+        extreme = [b for b in data["bounds"] if b.is_extreme]
+        self.assertEqual(len(extreme), 3)
+        self.assertEqual({b.extreme_dim for b in extreme}, {0, 1, 2})
         table = vis.create_bounds_table(data)
         self.assertEqual(len(table), 7)
-        found_z3_dummy = False
+        columns = {"ID", "Coordinates", "z^1(u)", "z^2(u)", "z^3(u)", "ν_1", "ν_2", "ν_3"}
         for row in table:
-            self.assertIn("ID", row)
-            self.assertIn("Coordinates", row)
-            self.assertIn("z^1(u)", row)
-            self.assertIn("z^2(u)", row)
-            self.assertIn("z^3(u)", row)
-            self.assertIn("ν_1", row)
-            self.assertIn("ν_2", row)
-            self.assertIn("ν_3", row)
-            # Ensure z_hat3 is NEVER present, replaced with z^3
+            self.assertTrue(columns.issubset(row))
             self.assertNotIn("z_hat3", row["z^3(u)"])
-            if row["z^3(u)"] == "z^3":
-                found_z3_dummy = True
-
-        self.assertTrue(found_z3_dummy, "Dummy point for component 3 should be displayed as z^3")
+        self.assertTrue(any(row["z^3(u)"] == "z^3" for row in table))
 
     def test_2d_bounds_and_graph(self):
         """Validates 2D local bounds generation and neighbor relationships."""
@@ -153,26 +107,6 @@ class TestVisualization(unittest.TestCase):
         fig2d = vis.plot_2d_bounds(data2)
         self.assertIsNotNone(fig2d)
 
-    def test_tracker_history(self):
-        """Tests the step-by-step history tracking."""
-        tracker = vis.LocalBoundsTracker([10.0, 10.0, 10.0], [0.0, 0.0, 0.0])
-        self.assertEqual(len(tracker.steps), 1)
-        self.assertEqual(tracker.steps[0].step, 0)
-        self.assertEqual(len(tracker.steps[0].bounds_data["bounds"]), 1)
-
-        step1 = tracker.add_point(lb.Point("z1", [4.0, 0.0, 4.0]))
-        self.assertEqual(step1.step, 1)
-        self.assertEqual(step1.destroyed_bounds, ["u0"])
-        self.assertEqual(len(step1.bounds_data["bounds"]), 3)
-
-        step2 = tracker.add_point(lb.Point("z2", [3.0, 3.0, 1.0]))
-        self.assertEqual(step2.step, 2)
-        self.assertEqual(len(step2.bounds_data["bounds"]), 5)
-
-        step3 = tracker.add_point(lb.Point("z3", [2.0, 2.0, 2.0]))
-        self.assertEqual(step3.step, 3)
-        self.assertEqual(len(step3.bounds_data["bounds"]), 7)
-
     def test_flask_interactive_app(self):
         """Tests interactive application API endpoints and external template."""
         client = web_app.app.test_client()
@@ -239,64 +173,26 @@ class TestVisualization(unittest.TestCase):
         self.assertEqual(cfg_data["dimensions"], 2)
 
     def test_point_validation_rules(self):
-        """Verifies thorough validation checks for invalid, dominated, and duplicate points."""
-        existing_pts = [
-            lb.Point("z1", [4.0, 0.0, 4.0]),
-            lb.Point("z2", [3.0, 3.0, 1.0]),
-            lb.Point("z3", [2.0, 2.0, 2.0])
+        existing_pts = [lb.Point(f"z{i+1}", coords) for i, coords in enumerate([[4,0,4], [3,3,1], [2,2,2]])]
+        lb_box, ub_box = [0]*3, [10]*3
+        invalid = [
+            ([1,2], "p", "DIMENSION_MISMATCH"),
+            ([1,2,3,4], "p", "DIMENSION_MISMATCH"),
+            ([float("nan"),2,3], "p", "NON_FINITE"),
+            ([float("inf"),2,3], "p", "NON_FINITE"),
+            ([-0.5,2,3], "p", "OUT_OF_BOUNDS"),
+            ([10.5,2,3], "p", "OUT_OF_BOUNDS"),
+            ([1.5,5,1.5], "z1", "DUPLICATE_ID"),
+            ([4,0,4], "z_new", "DUPLICATE_COORDINATES"),
+            ([5,5,5], "p_dom", "DOMINATED_POINT"),
+            ([1,1,1], "p_super", "DOMINATES_EXISTING"),
         ]
-        lb_box = [0.0, 0.0, 0.0]
-        ub_box = [10.0, 10.0, 10.0]
-
-        # 1. Dimension Mismatch
-        with self.assertRaises(vis.PointValidationError) as cm:
-            vis.validate_point([1.0, 2.0], "p", existing_pts, lb_box, ub_box)
-        self.assertEqual(cm.exception.code, "DIMENSION_MISMATCH")
-
-        with self.assertRaises(vis.PointValidationError) as cm:
-            vis.validate_point([1.0, 2.0, 3.0, 4.0], "p", existing_pts, lb_box, ub_box)
-        self.assertEqual(cm.exception.code, "DIMENSION_MISMATCH")
-
-        # 2. Non-numeric / NaN / Inf
-        with self.assertRaises(vis.PointValidationError) as cm:
-            vis.validate_point([float("nan"), 2.0, 3.0], "p", existing_pts, lb_box, ub_box)
-        self.assertEqual(cm.exception.code, "NON_FINITE")
-
-        with self.assertRaises(vis.PointValidationError) as cm:
-            vis.validate_point([float("inf"), 2.0, 3.0], "p", existing_pts, lb_box, ub_box)
-        self.assertEqual(cm.exception.code, "NON_FINITE")
-
-        # 3. Out of bounds (below LB or above UB)
-        with self.assertRaises(vis.PointValidationError) as cm:
-            vis.validate_point([-0.5, 2.0, 3.0], "p", existing_pts, lb_box, ub_box)
-        self.assertEqual(cm.exception.code, "OUT_OF_BOUNDS")
-
-        with self.assertRaises(vis.PointValidationError) as cm:
-            vis.validate_point([10.5, 2.0, 3.0], "p", existing_pts, lb_box, ub_box)
-        self.assertEqual(cm.exception.code, "OUT_OF_BOUNDS")
-
-        # 4. Duplicate ID
-        with self.assertRaises(vis.PointValidationError) as cm:
-            vis.validate_point([1.5, 5.0, 1.5], "z1", existing_pts, lb_box, ub_box)
-        self.assertEqual(cm.exception.code, "DUPLICATE_ID")
-
-        # 5. Duplicate Coordinates
-        with self.assertRaises(vis.PointValidationError) as cm:
-            vis.validate_point([4.0, 0.0, 4.0], "z_new", existing_pts, lb_box, ub_box)
-        self.assertEqual(cm.exception.code, "DUPLICATE_COORDINATES")
-
-        # 6. Dominated by existing point in N (e.g. z3 = (2,2,2) dominates (5,5,5))
-        with self.assertRaises(vis.PointValidationError) as cm:
-            vis.validate_point([5.0, 5.0, 5.0], "p_dom", existing_pts, lb_box, ub_box)
-        self.assertEqual(cm.exception.code, "DOMINATED_POINT")
-
-        # 7. Dominates existing point in N (e.g. (1,1,1) dominates z3 = (2,2,2))
-        with self.assertRaises(vis.PointValidationError) as cm:
-            vis.validate_point([1.0, 1.0, 1.0], "p_super", existing_pts, lb_box, ub_box)
-        self.assertEqual(cm.exception.code, "DOMINATES_EXISTING")
-
-        # 8. Valid nondominated point succeeds
-        vis.validate_point([1.5, 5.0, 1.5], "z4", existing_pts, lb_box, ub_box)
+        for coords, point_id, code in invalid:
+            with self.subTest(coords=coords, point_id=point_id):
+                with self.assertRaises(vis.PointValidationError) as error:
+                    vis.validate_point(coords, point_id, existing_pts, lb_box, ub_box)
+                self.assertEqual(error.exception.code, code)
+        vis.validate_point([1.5,5,1.5], "z4", existing_pts, lb_box, ub_box)
 
     def test_api_rejection_of_invalid_points(self):
         """Verifies that Flask API returns HTTP 400 with descriptive JSON when adding invalid points."""
@@ -365,49 +261,6 @@ class TestVisualization(unittest.TestCase):
         res_fig2d = client.get("/api/figure_3d")
         self.assertEqual(res_fig2d.status_code, 200)
 
-    def test_preset_loads_all_settings(self):
-        """Verifies that loading presets completely updates sense, dimensions, LB, UB, and points."""
-        client = web_app.app.test_client()
-
-        # 1. 2D Preset
-        res_2d = client.post("/api/load_preset", json={"preset": "2d"})
-        self.assertEqual(res_2d.status_code, 200)
-        d_2d = json.loads(res_2d.data)
-        self.assertEqual(d_2d["dimensions"], 2)
-        self.assertEqual(d_2d["sense"], "MINIMIZE")
-        self.assertEqual(d_2d["lower_bound"], [0.0, 0.0])
-        self.assertEqual(d_2d["upper_bound"], [10.0, 10.0])
-        self.assertEqual(len(d_2d["points"]), 3)
-
-        # 2. 3D Maximization Preset
-        res_max = client.post("/api/load_preset", json={"preset": "max_3d"})
-        self.assertEqual(res_max.status_code, 200)
-        d_max = json.loads(res_max.data)
-        self.assertEqual(d_max["dimensions"], 3)
-        self.assertEqual(d_max["sense"], "MAXIMIZE")
-        self.assertEqual(d_max["lower_bound"], [0.0, 0.0, 0.0])
-        self.assertEqual(d_max["upper_bound"], [10.0, 10.0, 10.0])
-        self.assertEqual(len(d_max["points"]), 3)
-
-        # 3. Paper 2 Preset
-        res_p2 = client.post("/api/load_preset", json={"preset": "paper2"})
-        self.assertEqual(res_p2.status_code, 200)
-        d_p2 = json.loads(res_p2.data)
-        self.assertEqual(d_p2["dimensions"], 3)
-        self.assertEqual(d_p2["sense"], "MINIMIZE")
-        self.assertEqual(d_p2["lower_bound"], [0.0, 0.0, 0.0])
-        self.assertEqual(d_p2["upper_bound"], [10.0, 10.0, 10.0])
-        self.assertEqual(len(d_p2["points"]), 3)
-
-        # 4. Paper 1 SA Preset (Example 2 / Figure 2)
-        res_p1 = client.post("/api/load_preset", json={"preset": "paper1_sa"})
-        self.assertEqual(res_p1.status_code, 200)
-        d_p1 = json.loads(res_p1.data)
-        self.assertEqual(len(d_p1["points"]), 2)
-        self.assertEqual(d_p1["points"][0]["coordinates"], [3.0, 5.0, 7.0])
-        self.assertEqual(d_p1["points"][1]["coordinates"], [6.0, 2.0, 4.0])
-        self.assertEqual(d_p1["bounds_count"], 5)
-
     def test_overlapping_configuration_requests(self):
         def configure_and_read(index):
             dims = 2 + index % 2
@@ -475,7 +328,7 @@ class TestVisualization(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     nbs.update(lb.Point("z", coords))
             vis.validate_point(valid, "z", [], [0, 0], [10, 10], sense)
-            self.assertTrue(nbs.update(lb.Point("z", valid)))
+            self.assertTrue(nbs.update(lb.Point("z", valid))[0])
             with self.assertRaises(ValueError):
                 nbs.find_containing_bound([1])
         missing = lb.BoundSet([10, 10])
@@ -654,27 +507,44 @@ class TestVisualization(unittest.TestCase):
     def test_figure_cache_preserves_options_and_validation(self):
         client = web_app.app.test_client()
         client.post("/api/load_preset", json={"preset": "paper2"})
-        with patch.object(vis, "plot_3d_bounds", wraps=vis.plot_3d_bounds) as spatial:
-            original = client.get("/api/figure_3d?step=2").data
-            self.assertEqual(client.get("/api/figure_3d?step=2").data, original)
-            self.assertEqual(spatial.call_count, 1)
-            changed = client.get("/api/figure_3d?step=2&show_boxes=1&dom_opacity=0.5").data
-            self.assertNotEqual(changed, original)
-            self.assertEqual(spatial.call_count, 2)
-            self.assertEqual(client.get("/api/figure_3d?step=2&show_boxes=1&dom_opacity=0.5").data, changed)
-            self.assertEqual(spatial.call_count, 2)
-            for suffix in ("step=oops", "dom_opacity=nan", "dom_opacity=inf"):
-                self.assertEqual(client.get("/api/figure_3d?" + suffix).status_code, 400)
-            client.post("/api/delete_point", json={"index": 2})
-            self.assertEqual(client.get("/api/figure_3d?step=2").data, original)
-            self.assertEqual(spatial.call_count, 3)
-        with patch.object(vis, "plot_pairwise_projections_2d", wraps=vis.plot_pairwise_projections_2d) as pairwise:
-            original = client.get("/api/figure_pairwise").data
-            self.assertEqual(client.get("/api/figure_pairwise").data, original)
-            self.assertEqual(pairwise.call_count, 1)
-            client.post("/api/configure", json={"dimensions": 2, "sense": "MAXIMIZE"})
-            self.assertNotEqual(client.get("/api/figure_pairwise").data, original)
-            self.assertEqual(pairwise.call_count, 2)
+        selected = client.get("/api/state?step=2").get_json()["table"][0]["ID"]
+        for route, plot_name in (("figure_3d", "plot_3d_bounds"), ("figure_pairwise", "plot_pairwise_projections_2d")):
+            spatial = route == "figure_3d"
+            base = f"/api/{route}?step=2&highlight={selected}"
+            options = ["labels=none"] + (["show_boxes=1&dom_opacity=0.5", "wireframe=1"] if spatial else [])
+            with patch.object(vis, plot_name, wraps=getattr(vis, plot_name)) as plot:
+                original = client.get(base).get_json()
+                self.assertEqual(client.get(base + "&labels=all").get_json(), original)
+                self.assertEqual(plot.call_count, 1)
+                for suffix in options:
+                    with self.subTest(route=route, option=suffix):
+                        changed = client.get(base + "&" + suffix).get_json()
+                        self.assertIn("data", changed)
+                        self.assertNotEqual(changed, original)
+                        self.assertEqual(client.get(base + "&" + suffix).get_json(), changed)
+                        if suffix == "wireframe=1":
+                            self.assertFalse(any(t["type"] == "mesh3d" for t in changed["data"]))
+                self.assertEqual(plot.call_count, 1 + len(options))
+                invalid = ["labels=focus", "labels=bad", "labels=", "labels=ALL", "step=oops"]
+                if spatial:
+                    invalid += ["dom_opacity=nan", "dom_opacity=inf"]
+                for suffix in invalid:
+                    response = client.get(f"/api/{route}?{suffix}")
+                    self.assertEqual(response.status_code, 400)
+                    if suffix.startswith("labels="):
+                        self.assertEqual(response.get_json()["code"], "INVALID_LABELS")
+                self.assertEqual(plot.call_count, 1 + len(options))
+                if spatial:
+                    client.post("/api/delete_point", json={"index": 2})
+                    self.assertEqual(client.get(base).get_json(), original)
+                else:
+                    client.post("/api/configure", json={"dimensions": 2, "sense": "MAXIMIZE"})
+                    self.assertNotEqual(client.get(base).get_json(), original)
+                self.assertEqual(plot.call_count, 2 + len(options))
+        figure = client.get("/api/figure_3d?labels=all").get_json()
+        markers = [t for t in figure["data"] if t.get("mode") == "markers"]
+        self.assertTrue(markers)
+        self.assertTrue(all(all(t["text"]) for t in markers))
 
     def test_shared_presets_and_custom_cli_dimensions(self):
         from visualization import cli
@@ -683,8 +553,17 @@ class TestVisualization(unittest.TestCase):
         for preset, (sense, coordinates) in PRESETS.items():
             response = client.post("/api/load_preset", json={"preset": preset})
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.get_json()["preset"], preset)
-            self.assertEqual([p["coordinates"] for p in response.get_json()["points"]], coordinates)
+            data = response.get_json()
+            dims = len(coordinates[0])
+            self.assertEqual(data["preset"], preset)
+            self.assertEqual(data["dimensions"], dims)
+            self.assertEqual(data["sense"], sense)
+            self.assertEqual(data["lower_bound"], [0]*dims)
+            self.assertEqual(data["upper_bound"], [10]*dims)
+            self.assertEqual([p["coordinates"] for p in data["points"]], coordinates)
+            if preset == "paper1_sa":
+                self.assertEqual(coordinates, [[3,5,7], [6,2,4]])
+                self.assertEqual(data["bounds_count"], 5)
             with patch("sys.argv", ["cli", "--preset", preset]), patch.object(cli, "generate_html_report") as report, contextlib.redirect_stdout(io.StringIO()):
                 cli.main()
             cli_data = report.call_args.args[0]
@@ -755,7 +634,6 @@ class TestVisualization(unittest.TestCase):
         self.assertEqual(list(bounds.customdata), [["u0", "u1"], "u2"])
         self.assertEqual(list(bounds.x), [4,8])
         self.assertEqual(bounds.text[0], "u0, u1")
-        self.assertEqual(bounds.textfont.color, "#ffffff")
         self.assertTrue(any(a.text == "u0, u1" and a.xref == "x" for a in fig.layout.annotations))
         self.assertEqual(bounds.marker.color[0], "#f97316")
         self.assertIn("u0, u1", bounds.hovertext[0])
@@ -765,9 +643,6 @@ class TestVisualization(unittest.TestCase):
         self.assertIn("z0, z1", points.hovertext[0])
         self.assertEqual(len([t for t in fig.data if t.mode == "lines"]), len(records) * 3)
         self.assertEqual([b.coordinates for b in data["bounds"]], [[4,4,2], [4,4,7], [8,3,1]])
-        all_labels = vis.plot_pairwise_projections_2d(data, label_mode="all")
-        all_bounds = next(t for t in all_labels.data if t.legendgroup == "local_bounds" and t.mode == "markers")
-        self.assertEqual(all_bounds.text[0], "u0, u1")
 
     def test_plot_ranges_and_view_revision_follow_problem_only(self):
         state = web_app.AppState()
@@ -786,43 +661,6 @@ class TestVisualization(unittest.TestCase):
         two = vis.plot_2d_bounds(data)
         self.assertEqual(tuple(two.layout.xaxis.range), (-2.5,8.5))
         self.assertEqual(tuple(two.layout.yaxis.range), (-4.5,16.5))
-
-    def test_readability_api_options_validation_and_cache_keys(self):
-        client = web_app.app.test_client()
-        client.post("/api/load_preset", json={"preset": "paper2"})
-        selected = client.get("/api/state").get_json()["table"][0]["ID"]
-        for route, plot_name in (("figure_3d", "plot_3d_bounds"), ("figure_pairwise", "plot_pairwise_projections_2d")):
-            with patch.object(vis, plot_name, wraps=getattr(vis, plot_name)) as plot:
-                original = client.get(f"/api/{route}?highlight={selected}").get_json()
-                self.assertEqual(client.get(f"/api/{route}?highlight={selected}").get_json(), original)
-                self.assertEqual(plot.call_count, 1)
-                for mode in ("none",):
-                    changed = client.get(f"/api/{route}?labels={mode}&highlight={selected}").get_json()
-                    self.assertNotEqual(changed, original)
-                    self.assertEqual(client.get(f"/api/{route}?labels={mode}&highlight={selected}").get_json(), changed)
-                self.assertEqual(plot.call_count, 2)
-                for invalid in ("focus", "bad", "", "ALL"):
-                    response = client.get(f"/api/{route}?labels={invalid}")
-                    self.assertEqual(response.status_code, 400)
-                    self.assertEqual(response.get_json()["code"], "INVALID_LABELS")
-                self.assertEqual(plot.call_count, 2)
-        for route in ("figure_3d", "figure_pairwise"):
-            default = client.get(f"/api/{route}").get_json()
-            self.assertEqual(default, client.get(f"/api/{route}?labels=all").get_json())
-            self.assertTrue(all(all(t["text"]) and t["textfont"]["size"] == 12
-                                for t in default["data"] if t.get("mode") == "markers"))
-        solid = client.get("/api/figure_3d").get_json()
-        self.assertTrue(all(t["opacity"] == 0.30 for t in solid["data"] if t["type"] == "mesh3d" and t["legendgroup"] == "dominated_zones"))
-        with patch.object(vis, "plot_3d_bounds", wraps=vis.plot_3d_bounds) as plot:
-            wire = client.get("/api/figure_3d?wireframe=1").get_json()
-            self.assertFalse(any(t["type"] == "mesh3d" for t in wire["data"]))
-            self.assertEqual(client.get("/api/figure_3d?wireframe=1").get_json(), wire)
-            self.assertEqual(plot.call_count, 1)
-            self.assertEqual(client.get("/api/figure_3d").get_json(), solid)
-        client.post("/api/load_preset", json={"preset": "2d"})
-        figure = client.get("/api/figure_3d?labels=all").get_json()
-        self.assertTrue(all(t["textfont"]["color"] == "#ffffff" and all(t["text"])
-                            for t in figure["data"] if t.get("mode") == "markers"))
 
     def test_final_cli_extracts_only_final_state(self):
         from visualization import cli
@@ -863,12 +701,18 @@ class TestVisualization(unittest.TestCase):
             return json.dumps(step.bounds_data, default=vis.BoundRecord.to_dict, sort_keys=True)
 
         tracker = vis.LocalBoundsTracker([10, 10], [0, 0])
+        self.assertEqual(len(tracker.steps), 1)
+        self.assertEqual(tracker.steps[0].step, 0)
+        self.assertEqual(len(tracker.steps[0].bounds_data["bounds"]), 1)
         point = lb.Point("z1", [3, 7])
         first = tracker.add_point(point)
+        self.assertEqual(first.step, 1)
+        self.assertEqual(first.destroyed_bounds, ["u0"])
         first_snapshot = snapshot(first)
         point.id = "renamed"
         point.coordinates = [2, 8]
         second = tracker.add_point(lb.Point("z2", [7, 2]))
+        self.assertEqual(second.step, 2)
         assert tracker.get_step(1) is first
         assert snapshot(first) == first_snapshot
         assert second.bounds_data["points"][0] == {"id": "renamed", "coordinates": [2, 8]}

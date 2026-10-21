@@ -365,8 +365,13 @@ void test_auto_algorithm() {
     std::vector<int64_t> ref6(6, 100);
     std::vector<int64_t> anti6(6, 0);
     BoundSet<int64_t, Objective::MINIMIZE> bs_6d(ref6, anti6);
-    bs_6d.update_auto(Point<int64_t>("z1", {10, 20, 30, 40, 50, 60}));
+    const auto initial_6d = bs_6d.bounds().front();
+    const auto result_6d = bs_6d.update_auto(Point<int64_t>("z1", {10, 20, 30, 40, 50, 60}));
     TEST("Auto 6D: bound set updated", bs_6d.size() == 6);
+    TEST("Auto 6D: returns the old bound with RA metadata", result_6d.first
+         && result_6d.second.size() == 1
+         && result_6d.second[0].to_string() == initial_6d.to_string()
+         && result_6d.second[0].defining_point_sets == initial_6d.defining_point_sets);
 
     // 6D without anti-reference: should dispatch to RE Enhanced
     BoundSet<int64_t, Objective::MINIMIZE> bs_6d_no_anti(ref6);
@@ -376,7 +381,7 @@ void test_auto_algorithm() {
 
 /**
  * Test adding a dominated point (outside all search zones).
- * The bound set should remain unchanged and update_* should return false.
+ * The bound set should remain unchanged and update_* should return {false, {}}.
  */
 void test_dominated_point() {
     std::cout << "\n=== Testing Dominated Point (No-Op & Return False) ===" << std::endl;
@@ -386,41 +391,41 @@ void test_dominated_point() {
     BoundSet<int64_t, Objective::MINIMIZE> bound_set({M, M});
 
     Point<int64_t> z1("z1", {3, 7});
-    bool r1 = bound_set.update_re(z1);
-    TEST("Valid point update_re returns true", r1);
+    auto r1 = bound_set.update_re(z1);
+    TEST("Valid point update_re returns true", r1.first);
     TEST("Before: 2 bounds", bound_set.size() == 2);
 
     // (4, 8) is dominated by z1 = (3,7) — outside all search zones
     Point<int64_t> z_dom("z_dom", {4, 8});
-    bool r_dom = bound_set.update_re(z_dom);
-    TEST("Dominated point update_re returns false", !r_dom);
+    auto r_dom = bound_set.update_re(z_dom);
+    TEST("Dominated point update_re returns false", !r_dom.first && r_dom.second.empty());
     TEST("After dominated point: still 2 bounds", bound_set.size() == 2);
 
     // Also test with naive
     BoundSet<int64_t, Objective::MINIMIZE> bs_naive({M, M});
-    TEST("Naive: valid point returns true", bs_naive.update_naive(Point<int64_t>("z1", {3, 7})));
-    TEST("Naive: dominated point returns false", !bs_naive.update_naive(Point<int64_t>("z_dom", {4, 8})));
+    TEST("Naive: valid point returns true", bs_naive.update_naive(Point<int64_t>("z1", {3, 7})).first);
+    TEST("Naive: dominated point returns false", !bs_naive.update_naive(Point<int64_t>("z_dom", {4, 8})).first);
     TEST("Naive: After dominated point, still 2 bounds", bs_naive.size() == 2);
 
     // Also test with enhanced (Alg 3)
     BoundSet<int64_t, Objective::MINIMIZE> bs_enhanced({M, M});
-    TEST("Enhanced: valid point returns true", bs_enhanced.update_re_enhanced(Point<int64_t>("z1", {3, 7})));
-    TEST("Enhanced: dominated point returns false", !bs_enhanced.update_re_enhanced(Point<int64_t>("z_dom", {4, 8})));
+    TEST("Enhanced: valid point returns true", bs_enhanced.update_re_enhanced(Point<int64_t>("z1", {3, 7})).first);
+    TEST("Enhanced: dominated point returns false", !bs_enhanced.update_re_enhanced(Point<int64_t>("z_dom", {4, 8})).first);
 
     // Also test with RA-SA (Alg 4)
     BoundSet<int64_t, Objective::MINIMIZE> bs_ra_sa({M, M}, {m, m});
-    TEST("RA-SA: valid point returns true", bs_ra_sa.update_ra_sa(Point<int64_t>("z1", {3, 7})));
-    TEST("RA-SA: dominated point returns false", !bs_ra_sa.update_ra_sa(Point<int64_t>("z_dom", {4, 8})));
+    TEST("RA-SA: valid point returns true", bs_ra_sa.update_ra_sa(Point<int64_t>("z1", {3, 7})).first);
+    TEST("RA-SA: dominated point returns false", !bs_ra_sa.update_ra_sa(Point<int64_t>("z_dom", {4, 8})).first);
 
     // Also test with RA (Alg 5)
     BoundSet<int64_t, Objective::MINIMIZE> bs_ra({M, M}, {m, m});
-    TEST("RA: valid point returns true", bs_ra.update_ra(Point<int64_t>("z1", {3, 7})));
-    TEST("RA: dominated point returns false", !bs_ra.update_ra(Point<int64_t>("z_dom", {4, 8})));
+    TEST("RA: valid point returns true", bs_ra.update_ra(Point<int64_t>("z1", {3, 7})).first);
+    TEST("RA: dominated point returns false", !bs_ra.update_ra(Point<int64_t>("z_dom", {4, 8})).first);
 
     // Also test with auto
     BoundSet<int64_t, Objective::MINIMIZE> bs_auto({M, M});
-    TEST("Auto: valid point returns true", bs_auto.update_auto(Point<int64_t>("z1", {3, 7})));
-    TEST("Auto: dominated point returns false", !bs_auto.update_auto(Point<int64_t>("z_dom", {4, 8})));
+    TEST("Auto: valid point returns true", bs_auto.update_auto(Point<int64_t>("z1", {3, 7})).first);
+    TEST("Auto: dominated point returns false", !bs_auto.update_auto(Point<int64_t>("z_dom", {4, 8})).first);
 }
 
 /**
@@ -626,11 +631,11 @@ void test_native_order_and_queries() {
     for (size_t step = 0; step < data.size(); ++step) {
         Point<int64_t> z("z" + std::to_string(step), orient(data[step]));
         bool updated;
-        if (step == 0) updated = tree.update_re(z);
-        else if (step == 1) updated = tree.update_re_enhanced(z);
-        else if (step == 2) updated = tree.update_naive(z);
-        else updated = tree.update_auto(z);
-        query_matches &= updated && !tree.update_re(z);
+        if (step == 0) updated = tree.update_re(z).first;
+        else if (step == 1) updated = tree.update_re_enhanced(z).first;
+        else if (step == 2) updated = tree.update_naive(z).first;
+        else updated = tree.update_auto(z).first;
+        query_matches &= updated && !tree.update_re(z).first;
         const auto exported = tree.bounds();
         query_matches &= exported.size() == tree.size();
         for (int a = -1; a <= 11; ++a) for (int b = -1; b <= 11; ++b)
@@ -662,6 +667,76 @@ void test_native_order_and_queries() {
     try { (void)tree.find_containing_bound({}); }
     catch (const std::invalid_argument&) { containing_error = true; }
     TEST("Direct tree queries retain dimension validation", search_error && containing_error);
+}
+
+template<Objective Sense, typename Bounds, typename Update>
+void check_update_results(Bounds& bounds, Update update) {
+    using BoundVector = std::vector<LocalBound<int64_t>>;
+    auto orient = [](std::vector<int64_t> coordinates) {
+        if constexpr (Sense == Objective::MAXIMIZE)
+            for (auto& x : coordinates) x = 10 - x;
+        return coordinates;
+    };
+    auto same_snapshots = [](BoundVector actual, BoundVector expected) {
+        auto by_id = [](const auto& a, const auto& b) { return a.id < b.id; };
+        std::sort(actual.begin(), actual.end(), by_id);
+        std::sort(expected.begin(), expected.end(), by_id);
+        if (actual.size() != expected.size()) return false;
+        for (size_t i = 0; i < actual.size(); ++i) {
+            if (actual[i].to_string() != expected[i].to_string() ||
+                actual[i].defining_points != expected[i].defining_points ||
+                actual[i].defining_point_sets != expected[i].defining_point_sets)
+                return false;
+        }
+        return true;
+    };
+    std::vector<std::pair<BoundVector, BoundVector>> saved;
+    bool matches = true, saw_multiple = false;
+    const std::vector<std::vector<int64_t>> data{{3,5,7},{6,2,4},{2,6,5},{5,4,3}};
+    for (size_t i = 0; i < data.size(); ++i) {
+        const Point<int64_t> point("z" + std::to_string(i), orient(data[i]));
+        BoundVector expected;
+        for (const auto& bound : bounds.bounds())
+            if (strictly_dominates<int64_t, Sense>(point.coordinates, bound.coordinates))
+                expected.push_back(bound);
+        auto [updated, dominated] = (bounds.*update)(point);
+        matches &= updated == !expected.empty() && same_snapshots(dominated, expected);
+        saw_multiple |= dominated.size() > 1;
+        saved.emplace_back(std::move(dominated), std::move(expected));
+        const auto before = bounds.bounds();
+        const auto duplicate = (bounds.*update)(point);
+        matches &= !duplicate.first && duplicate.second.empty()
+            && same_snapshots(bounds.bounds(), before);
+    }
+    const auto before = bounds.bounds();
+    const auto rejected = (bounds.*update)(Point<int64_t>("dominated", orient({9,9,9})));
+    matches &= !rejected.first && rejected.second.empty()
+        && same_snapshots(bounds.bounds(), before);
+    for (const auto& snapshots : saved)
+        matches &= same_snapshots(snapshots.first, snapshots.second);
+    TEST("Updates return every dominated old snapshot, preserved across later updates", matches && saw_multiple);
+}
+
+template<Objective Sense>
+void test_all_update_results() {
+    using BS = BoundSet<int64_t, Sense>;
+    using Tree = BoundSetTree<int64_t, Sense>;
+    const std::vector<int64_t> ref(3, Sense == Objective::MINIMIZE ? 10 : 0);
+    const std::vector<int64_t> anti(3, Sense == Objective::MINIMIZE ? 0 : 10);
+    for (auto update : {&BS::update_re, &BS::update_re_enhanced, &BS::update_ra_sa,
+                        &BS::update_ra, &BS::update_naive, &BS::update_auto}) {
+        BS bounds(ref, anti);
+        check_update_results<Sense>(bounds, update);
+    }
+    for (size_t leaf_size : {2, 32}) {
+        for (auto update : {&Tree::update_re, &Tree::update_re_enhanced,
+                            &Tree::update_naive, &Tree::update_auto}) {
+            Tree bounds(ref, anti, leaf_size, 2);
+            check_update_results<Sense>(bounds, update);
+        }
+    }
+    NeighborhoodBoundSet<int64_t, Sense> bounds(ref, anti);
+    check_update_results<Sense>(bounds, &NeighborhoodBoundSet<int64_t, Sense>::update);
 }
 
 template<Objective Sense>
@@ -714,6 +789,8 @@ int main() {
     test_algorithm_consistency();
     test_native_order_and_queries<Objective::MINIMIZE>();
     test_native_order_and_queries<Objective::MAXIMIZE>();
+    test_all_update_results<Objective::MINIMIZE>();
+    test_all_update_results<Objective::MAXIMIZE>();
     test_linear_list_compaction<Objective::MINIMIZE>();
     test_linear_list_compaction<Objective::MAXIMIZE>();
 

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <deque>
 #include <limits>
+#include <numeric>
 #include <vector>
 
 #include "../local_bounds/dominance.hpp"
@@ -28,6 +29,7 @@ public:
   Point worst_point; // Represents the nadir bound condition (max for MINIMIZE,
                      // min for MAXIMIZE)
   LBTreeNode *parent = nullptr;
+  size_t subtree_size = 0; // Counts skipped bounds to preserve pre-update export IDs.
 };
 
 /**
@@ -60,15 +62,18 @@ public:
    * @brief Extracts and removes all bounds strictly dominated by the given point.
    *
    * @param z_bar The new point that determines which bounds to invalidate.
+   * @param ordinals Optional output for pre-extraction GetAllBounds() indices,
+   *                 appended in the same order as the extracted bounds.
    * @return A vector of bounds that were strictly dominated and removed.
    */
-  std::vector<Point> ExtractStrictlyDominated(const Point &z_bar) {
+  std::vector<Point> ExtractStrictlyDominated(const Point &z_bar,
+                                              std::vector<size_t> *ordinals = nullptr) {
     detail::validate_coordinates(z_bar, p_);
     std::vector<Point> strictly_dominated;
     if (!root_)
       return strictly_dominated;
 
-    bool delete_root = ExtractRecursive(root_, z_bar, strictly_dominated);
+    bool delete_root = ExtractRecursive(root_, z_bar, strictly_dominated, ordinals, 0);
     if (delete_root) {
       free_node(root_);
       root_ = allocate_node();
@@ -194,6 +199,7 @@ private:
       node->children.clear();
       node->best_point.clear();
       node->worst_point.clear();
+      node->subtree_size = 0;
       return node;
     }
     arena_.emplace_back();
@@ -221,7 +227,8 @@ private:
    * @return True if the subtree rooted at 'n' is entirely extracted/empty and should be deleted.
    */
   bool ExtractRecursive(Node *n, const Point &z_bar,
-                        std::vector<Point> &extracted) {
+                        std::vector<Point> &extracted,
+                        std::vector<size_t> *ordinals, size_t offset) {
     if (n->best_point.empty() || n->worst_point.empty())
       return false;
 
@@ -242,14 +249,28 @@ private:
 
     if (mass_hit) {
       GetPointsRecursive(n, extracted);
+      if (ordinals) {
+        for (size_t i = 0; i < n->subtree_size; ++i)
+          ordinals->push_back(offset + i);
+      }
       return true;
     }
 
     if (n->is_leaf()) {
+      std::vector<size_t> indices;
+      if (ordinals) {
+        indices.resize(n->L.size());
+        std::iota(indices.begin(), indices.end(), size_t{0});
+      }
       size_t i = 0;
       while (i < n->L.size()) {
         if (strictly_inside(z_bar, n->L[i])) {
           extracted.push_back(n->L[i]);
+          if (ordinals) {
+            ordinals->push_back(offset + indices[i]);
+            std::swap(indices[i], indices.back());
+            indices.pop_back();
+          }
           std::swap(n->L[i], n->L.back());
           n->L.pop_back();
         } else {
@@ -261,12 +282,14 @@ private:
     } else {
       size_t i = 0;
       while (i < n->children.size()) {
-        if (ExtractRecursive(n->children[i], z_bar, extracted)) {
+        const size_t child_size = n->children[i]->subtree_size;
+        if (ExtractRecursive(n->children[i], z_bar, extracted, ordinals, offset)) {
           free_node(n->children[i]);
           n->children.erase(n->children.begin() + i);
         } else {
           ++i;
         }
+        offset += child_size;
       }
       if (n->children.empty())
         return true;
@@ -277,6 +300,7 @@ private:
         n->L = std::move(remaining->L);
         n->best_point = std::move(remaining->best_point);
         n->worst_point = std::move(remaining->worst_point);
+        n->subtree_size = remaining->subtree_size;
         n->children = std::move(remaining->children);
         for (auto *c : n->children)
           c->parent = n;
@@ -301,6 +325,7 @@ private:
       for (const auto &existing : n->L)
         if (covers_bound(existing, u_new)) return false;
       n->L.push_back(u_new);
+      ++n->subtree_size;
       UpdateBestWorst(n, u_new);
       if (n->L.size() > max_leaf_size_) Split(n);
       return true;
@@ -312,6 +337,7 @@ private:
       if (!closest || d < min_dist) { min_dist = d; closest = child; }
     }
     if (!InsertRecursive(closest, u_new)) return false;
+    ++n->subtree_size;
     UpdateBestWorst(n, u_new);
     return true;
   }
@@ -321,6 +347,9 @@ private:
    * @param n The node to recalculate.
    */
   void RecalculateBounds(Node *n) {
+    n->subtree_size = n->L.size();
+    for (const auto *child : n->children)
+      n->subtree_size += child->subtree_size;
     if (n->is_leaf()) {
       if (n->L.empty())
         return;
@@ -380,6 +409,7 @@ private:
     Node *first_child = allocate_node();
     first_child->parent = n;
     first_child->L.push_back(z);
+    first_child->subtree_size = 1;
     first_child->best_point = z;
     first_child->worst_point = z;
 
@@ -415,6 +445,7 @@ private:
       Node *child_prime = allocate_node();
       child_prime->parent = n;
       child_prime->L.push_back(next_z);
+      child_prime->subtree_size = 1;
       child_prime->best_point = next_z;
       child_prime->worst_point = next_z;
       new_children.push_back(child_prime);
@@ -436,6 +467,7 @@ private:
 
       if (closest) {
         closest->L.push_back(p_pt);
+        ++closest->subtree_size;
         for (size_t i = 0; i < p_; ++i) {
           if (is_better(p_pt[i], closest->best_point[i]))
             closest->best_point[i] = p_pt[i];
