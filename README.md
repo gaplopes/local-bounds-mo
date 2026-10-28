@@ -32,23 +32,28 @@ This library is an **independent C++ reimplementation** of the algorithms descri
 
 ### Complexity
 
-**Algorithms 2–5** (Paper 1) share a common first step: finding the set A of bounds whose search zones contain the new point. This costs O(|U(N)|) with a linear scan, or O(log^p |U(N)| + |A|) with a range tree (see Paper 1 Section 5.2). **This library uses the linear scan approach.** The complexities below are for the **remaining steps** (candidate generation and filtering/avoidance):
+**Algorithms 2–5** (Paper 1) share a common first step: finding the set A of bounds whose search zones contain the new point. For fixed dimension p, this costs O(|U(N)|) with a linear scan, or O(log^p |U(N)| + |A|) with a range tree (see Paper 1 Section 5.2). `BoundSet` uses the linear scan approach. `BoundSetTree` uses its `LBTree` spatial index, whose pruning depends on the workload. The complexities below describe **candidate generation and filtering/avoidance for fixed p**:
 
 | Algorithm | Class | Remaining-step complexity | Notes |
 |-----------|-------|--------------------------|-------|
-| Naive | `BoundSet` | O(p²\|A\|² + p\|A\|·\|U\|) | Brute-force: generates p\|A\| candidates, pairwise + cross filtering |
-| Algorithm 2 (RE) | `BoundSet` | O(p\|A\|·(p\|A\| + \|B\|)) | Filters candidates against P ∪ B |
-| Algorithm 3 (RE enhanced) | `BoundSet` | O(\|A\|²) | Prop. 5.1; reducible to O(\|A\| log \|A\|) for p ∈ {2,3}, O(\|A\| log^(p-3) \|A\| log log \|A\|) for p ≥ 4 |
+| Naive | `BoundSet` | O(\|A\|² + \|A\|·\|U\|) | Brute-force: generates p\|A\| candidates, pairwise + cross filtering |
+| Algorithm 2 (RE) | `BoundSet` | O(\|A\|·(\|A\| + \|B\|)) | Filters candidates against P ∪ B |
+| Algorithm 3 (RE enhanced) | `BoundSet` | O(\|A\|·(\|A\| + \|B\|)) | GP: O(\|A\|²) (Prop. 5.1), theoretically reducible to O(\|A\| log \|A\|) for p ∈ {2,3}, O(\|A\| log^(p-3) \|A\| log log \|A\|) for p ≥ 4 using specialized filtering not implemented here |
 | Algorithm 4 (RA, GP) | `BoundSet` | O(\|A\|) | Prop. 5.2; no filtering needed |
 | Algorithm 5 (RA, general) | `BoundSet` | O(\|N\|·\|A\|) worst case | Due to Z^k(u) sets; in practice much smaller |
 
+RE also scans current bounds to build the per-coordinate B_j sets, and general-case RA scans current bounds to update defining sets. These passes are additional to the candidate costs above.
+
 **Algorithm 1** (Paper 2) traverses the affected region through a neighborhood graph. The paper's O(|U_z̄|) bound assumes a containing bound is supplied. This implementation first scans allocated node storage and initializes a visitation array over that storage. For fixed p, an update therefore has O(C + |U_z̄|) overhead, where C is the allocated node capacity (including inactive slots).
 
-`nonredundant_bounds()` and `nonredundant_size()` check global containment to handle tied-coordinate aliases correctly. These exports take O(p·C²) in the worst case. `get_adjacency_graph()` classifies each active node once per export and reuses the results while contracting redundant nodes. Its cost also includes graph traversal and materializing the complete adjacency, which can be dense. Exports occur outside the benchmark's timed update section.
+`nonredundant_bounds()`, `nonredundant_size()`, and `get_adjacency_graph()` share global pairwise containment classification across allocated storage to handle tied-coordinate aliases correctly, retaining the first active slot for equal-coordinate bounds. The graph and update algorithm retain all active nodes, including quasi-nonredundant ones. Each call owns its classification mask; copies and subsequent updates require no cache invalidation. Standalone `get_clean_neighbors()` performs containment scans for the nodes it visits.
+
+Classification takes O(p·C²) time in the worst case and O(C) temporary storage for the mask, where C includes inactive slots. Graph export also traverses and materializes adjacency, which can be dense. The benchmark reports exports separately from updates.
 
 Where:
 - |U(N)| is the total number of local bounds
 - |A| is the number of search zones containing the new point (|A| ⊆ |U_z̄|)
+- |B| is the total size of the per-coordinate B_j sets
 - |U_z̄| is the number of bounds created and destroyed during one update
 - |N| is the total number of points
 - p is the number of objectives
@@ -87,6 +92,7 @@ The algorithms assume a stable input set. RA-SA additionally assumes that distin
 Uses a neighborhood graph to traverse affected bounds after locating a containing bound:
 
 ```cpp
+#include <iostream>
 #include "local_bounds.hpp"
 using namespace local_bounds;
 
@@ -115,21 +121,22 @@ std::cout << "Total: " << bounds.size()
 
 ### Algorithms 2–5 — BoundSet
 
-The simplest way is to use `update_auto()`, which selects the best algorithm based on the number of objectives `p`:
+`update_auto()` uses a fixed heuristic: Algorithm 2 (RE) for p ≤ 5, and Algorithm 5 (RA) for p ≥ 6 when defining metadata and strict interior-point requirements are satisfied. Otherwise, it falls back to RE:
 
 ```cpp
+#include <iostream>
 #include "local_bounds.hpp"
 using namespace local_bounds;
 
 // Provide both reference (nadir) and anti-reference (ideal) points
-// so that update_auto() can use RA algorithms when p >= 6.
+// so that update_auto() can use Algorithm 5 (RA) when p >= 6.
 // For p <= 5, update_auto() currently dispatches to Algorithm 2 (RE).
 BoundSet<double, Objective::MINIMIZE> bounds(
     {100.0, 100.0, 100.0},  // nadir (reference)
     {  0.0,   0.0,   0.0}   // ideal (anti-reference)
 );
 
-// update_auto() picks the best algorithm for your number of objectives
+// update_auto() uses the dimension heuristic and falls back to RE when needed
 bounds.update_auto(Point<double>("z1", {30.0, 70.0, 50.0}));
 bounds.update_auto(Point<double>("z2", {50.0, 50.0, 40.0}));
 
@@ -145,11 +152,11 @@ for (const auto& b : bounds.bounds()) {
 You can also choose a specific algorithm explicitly:
 
 ```cpp
-// For p <= 5: Algorithm 2 (RE) — single-argument constructor suffices
+// Algorithm 2 (RE) — single-argument constructor suffices
 BoundSet<double, Objective::MINIMIZE> bounds_re({100.0, 100.0});
 bounds_re.update_re(Point<double>("z1", {30.0, 70.0}));
 
-// For p >= 6: Algorithm 4 or 5 (RA) — requires both reference and anti-reference
+// Algorithm 5 (RA, general case) — requires both reference and anti-reference
 std::vector<double> nadir = {100.0, 100.0, 100.0, 100.0, 100.0, 100.0};
 std::vector<double> ideal = {  0.0,   0.0,   0.0,   0.0,   0.0,   0.0};
 BoundSet<double, Objective::MINIMIZE> bounds_ra(nadir, ideal);
@@ -232,7 +239,9 @@ local-bounds-mo/
 ├── examples/
 │   └── basic_usage.cpp               # Min/max/dominance usage examples
 ├── benchmark/
-│   └── benchmark.cpp                 # Performance comparison across algorithms
+│   ├── benchmark.cpp                 # Performance comparison across algorithms
+│   ├── benchmark_lbtree.cpp          # LBTree insertion-order and containment benchmarks
+│   └── benchmark_common.hpp          # Shared instance generation and timing
 ├── pyproject.toml                    # Python package configuration (scikit-build-core + nanobind)
 ├── CMakeLists.txt
 └── CMakePresets.json                  # debug, release, dev presets
@@ -241,7 +250,7 @@ local-bounds-mo/
 ## Requirements
 
 - **C++17** or higher
-- **CMake 3.14** or higher (CMake 3.21+ required if using the provided `CMakePresets.json`)
+- **CMake 3.15** or higher (CMake 3.21+ required if using the provided `CMakePresets.json`)
 
 ## Installation
 
@@ -381,7 +390,7 @@ class BoundSet {
     BoundSet(const std::vector<T>& reference_point,
              const std::vector<T>& anti_reference);
     
-    UpdateResult<T> update_auto(const Point<T>& point);            // Auto-select best algorithm based on p
+    UpdateResult<T> update_auto(const Point<T>& point);            // Dimension heuristic with RE fallback
     UpdateResult<T> update_naive(const Point<T>& point);           // Naive
     UpdateResult<T> update_re(const Point<T>& point);              // Algorithm 2 (RE)
     UpdateResult<T> update_re_enhanced(const Point<T>& point);     // Algorithm 3 (Enhanced RE)
@@ -419,13 +428,24 @@ class BoundSetTree {
 };
 ```
 
+#### Query order, ordinals, and pruning
+
+An **ordinal** is a bound's zero-based position in the tree's current depth-first export order. `LBTree::GetAllBounds()` uses this order, and `BoundSetTree::bounds()` assigns the corresponding IDs `u0`, `u1`, `u2`, and so on. `find_containing_bound(point)` returns the first matching bound in that same order, with the same ID. These positions and IDs can change after updates; they are not permanent identifiers.
+
+**Pruning** means skipping a subtree whose bounding box proves that none of its bounds can contain the query point in their search zones. Each node records how many bounds its subtree contains (`subtree_size`). If a skipped subtree contains 100 bounds, an ID-preserving query advances the ordinal counter by 100 without inspecting those bounds individually. This preserves the first matching bound and its ID while avoiding unnecessary dominance comparisons.
+
+Boolean queries through `is_in_search_region()` already use bounding-box pruning. Ordinal-aware pruning allows `find_containing_bound()` to skip subtrees while still returning the correct ID. This optimization does not change the local-bound update algorithms or replace their storage.
+
 ### Dominance Functions
 
 ```cpp
 template <typename T, Objective Sense = Objective::MINIMIZE>
 bool weakly_dominates(const std::vector<T>& v1, const std::vector<T>& v2);
+template <typename T, Objective Sense = Objective::MINIMIZE>
 bool strictly_dominates(const std::vector<T>& v1, const std::vector<T>& v2);
+template <typename T, Objective Sense = Objective::MINIMIZE>
 bool dominates(const std::vector<T>& v1, const std::vector<T>& v2);
+template <typename T, Objective Sense = Objective::MINIMIZE>
 bool incomparable(const std::vector<T>& v1, const std::vector<T>& v2);
 ```
 
@@ -507,7 +527,7 @@ python -m visualization.app --port 8050
 Open `http://127.0.0.1:8050` in your browser. Features include:
 - **In-Place Problem Configuration**: Directly switch between 2D and 3D, toggle Minimization ($U(N)$) vs Maximization ($L(N)$), and customize Lower Bound ($LB$) and Upper Bound ($UB$) search spaces without intrusive popups.
 - **Custom Instances**: Click **New custom instance** beside the dimension selector to start empty with the displayed dimension, sense, and interval bounds, then enter points. Applying settings or loading a preset starts a new problem and resets the views.
-- **Strict Point Validation**: Automatically checks for dimension matching, finite coordinates, search space containment $[LB, UB]$, duplicate points, and Pareto dominance violations (points dominated by $N$ or dominating existing points in $N$) with clean, non-intrusive inline error banners.
+- **Strict Point Validation**: Automatically checks for dimension matching, finite coordinates, search space containment ($[LB, UB)$ for minimization, $(LB, UB]$ for maximization), duplicate points, and Pareto dominance violations (points dominated by $N$ or dominating existing points in $N$) with clean, non-intrusive inline error banners.
 - **Generation Timeline Slider**: Step forward and backward through point insertions, tracking destroyed, created, and persistent bounds.
 - **3D & 2D Spatial Views**:
   - 3D view: Translucent (30% opacity by default), uniquely color-coded Pareto dominance cones $D(z) = [z, M]$ (matching Fig. 2 in Klamroth et al. 2015), opposite-axis camera perspective (looking from Ideal $m$ towards Nadir $M$), real-time interactive opacity slider, and single unified legend entry for one-click toggling.
@@ -575,6 +595,7 @@ The library includes a benchmarking tool (`benchmark/benchmark.cpp`) that evalua
 
 - The final number of local bounds (`|U(N)|`)
 - The computation time (in milliseconds) for each algorithm
+- Export time separately from update time; export timing excludes verification sorting
 - The average number of bounds updated per point insertion (`|A|`)
 
 To build and run the benchmarks, make sure to compile in Release mode:
@@ -585,7 +606,27 @@ cmake --build build
 ./build/benchmark
 ```
 
-The tool will run iterations for both minimization and maximization, across both *General Position* and *General Case* instance types. Results are printed to standard output and automatically saved to `benchmark_results.txt`.
+The tool will run iterations for both minimization and maximization, across both *General Position* and *General Case* instance types. Default comparison results are saved to `benchmark_results.txt`, falling back to standard output if the file cannot be opened.
+
+The `benchmark_lbtree --classification` mode compares pairwise containment scans with an LBTree index:
+
+```bash
+./build/benchmark_lbtree --classification > build/classification_benchmark.csv
+./build/benchmark_lbtree --classification 1 > build/classification_smoke.csv
+```
+
+This mode uses three seeds by default (the optional argument sets the run count), both objectives, both instance types, and dimensions 3–6. It samples snapshots around 500–5,000 active bounds and reports actual active counts and allocated slots. Each timing is the median of three measurements. `scan_ms` and `index_ms` classify the same exported snapshot; `index_ms` includes building and destroying the tree and duplicate-coordinate set. `auto_count_ms` measures the library's actual `nonredundant_size()` call over allocated storage, and `graph_ms` measures complete clean graph export. This mode checks indexed and library classification masks against an independent pairwise scan. The generator can exhaust its attempt budget before reaching every target.
+
+Its default mode measures how insertion order affects tree depth, construction time, and lookup time:
+
+```bash
+./build/benchmark_lbtree > build/lbtree.csv
+./build/benchmark_lbtree 1 > build/lbtree_smoke.csv
+```
+
+It builds the same nonredundant bound snapshots in native, lexicographically sorted, and seeded shuffled orders, using the default leaf size 32 and eight children. Fixtures use seed 42, both objectives, both instance types, and dimensions 3–6, with snapshots near 500, 1,000, 3,000, and 5,000 bounds or the final available snapshot. Three shuffles (seeds 42–44) run by default; the optional argument changes this count. The `order` column includes the shuffle seed.
+
+CSV has eight columns: `dimensions,sense,instance,bounds,order,depth,build_ms,query_ms`. Depth counts nodes from root to deepest leaf. Times are medians of three measurements; `build_ms` includes construction, insertion, and destruction. Sorting, shuffling, depth measurement, and correctness checks are untimed, so this is an order-sensitivity diagnostic rather than a comparison of total preprocessing costs. Every order must preserve the exact stored bounds and count, and match linear-scan answers for the same fixed query batch. Queries sample bound coordinates and points one integer unit inside them in every objective. Detailed query-ID checks remain in the unit tests.
 
 ## Contributing
 

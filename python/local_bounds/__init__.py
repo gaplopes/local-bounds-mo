@@ -89,7 +89,7 @@ class BoundSetTree:
     def is_in_search_region(self, point): return self._impl.is_in_search_region(point)
     def find_containing_bound(self, point): return self._impl.find_containing_bound(point)
     @property
-    def bounds(self): return self._impl.bounds
+    def bounds(self): return self._impl.bounds()
 
 __all__ = [
     "Objective",

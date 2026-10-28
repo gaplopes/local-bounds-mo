@@ -18,96 +18,14 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
-#include <random>
 #include <sstream>
 #include <type_traits>
 #include <vector>
 
+#include "benchmark_common.hpp"
 #include "local_bounds.hpp"
 
 using namespace local_bounds;
-
-/**
- * Instance type controlling whether points satisfy the
- * General Position assumption (SA) from the paper.
- */
-enum class InstanceType {
-  GENERAL_POSITION,  // SA: no two points share a value in any dimension
-  GENERAL_CASE       // General: points may share component values
-};
-
-std::string instance_type_str(InstanceType type) {
-  switch (type) {
-    case InstanceType::GENERAL_POSITION:
-      return "SA";
-    case InstanceType::GENERAL_CASE:
-      return "General";
-  }
-  return "Unknown";
-}
-
-/**
- * Generate a random stable set of points (no point dominates another).
- */
-template <Objective Sense>
-std::vector<Point<int64_t>> generate_stable_set(
-    std::size_t num_points,
-    std::size_t dimensions,
-    int64_t K,
-    InstanceType instance_type,
-    unsigned seed) {
-  std::mt19937_64 rng(seed);
-  std::uniform_int_distribution<int64_t> dist(1, K);
-
-  std::vector<Point<int64_t>> points;
-  points.reserve(num_points);
-
-  std::size_t attempts = 0;
-  const std::size_t max_attempts = num_points * 100;
-
-  while (points.size() < num_points && attempts < max_attempts) {
-    ++attempts;
-
-    // Generate random point
-    std::vector<int64_t> coords(dimensions);
-    for (std::size_t j = 0; j < dimensions; ++j) {
-      coords[j] = dist(rng);
-    }
-
-    // Check if dominated by or dominates any existing point
-    bool is_valid = true;
-    for (const auto& existing : points) {
-      if (weakly_dominates<int64_t, Sense>(existing.coordinates, coords) ||
-          weakly_dominates<int64_t, Sense>(coords, existing.coordinates)) {
-        is_valid = false;
-        break;
-      }
-    }
-
-    // Under general position (SA), also reject if any component value
-    // is shared with an existing point in any dimension
-    if (is_valid && instance_type == InstanceType::GENERAL_POSITION) {
-      for (const auto& existing : points) {
-        for (std::size_t j = 0; j < dimensions; ++j) {
-          if (coords[j] == existing.coordinates[j]) {
-            is_valid = false;
-            break;
-          }
-        }
-        if (!is_valid) break;
-      }
-    }
-
-    if (is_valid) {
-      points.emplace_back("z" + std::to_string(points.size() + 1), std::move(coords));
-    }
-  }
-
-  // Randomly reorder the points
-  std::shuffle(points.begin(), points.end(), rng);
-
-  return points;
-}
 
 struct BenchmarkResult {
   std::string algorithm;
@@ -118,6 +36,7 @@ struct BenchmarkResult {
   std::size_t final_bounds;
   double time_ms;
   double avg_A;
+  double export_ms;
   std::vector<std::vector<int64_t>> coordinates;
 };
 
@@ -129,7 +48,9 @@ std::vector<std::vector<int64_t>> canonicalize_bounds(
     out.push_back(b.coordinates);
   }
   std::sort(out.begin(), out.end());
-  out.erase(std::unique(out.begin(), out.end()), out.end());
+  if (std::adjacent_find(out.begin(), out.end()) != out.end()) {
+    throw std::runtime_error("Duplicate bound coordinates");
+  }
   return out;
 }
 
@@ -296,14 +217,20 @@ BenchmarkResult run_benchmark(
   double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
 
   std::size_t final_bounds = 0;
+  double export_ms = 0;
   std::vector<std::vector<int64_t>> coordinates;
   if constexpr (std::is_same_v<BoundSetType, NeighborhoodBoundSet<int64_t, Sense>>) {
+    const auto export_start = std::chrono::steady_clock::now();
     auto exported = bounds.nonredundant_bounds();
+    export_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - export_start).count();
     final_bounds = exported.size();
     coordinates = canonicalize_bounds(exported);
   } else {
+    const auto export_start = std::chrono::steady_clock::now();
+    decltype(auto) exported = bounds.bounds();
+    export_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - export_start).count();
     final_bounds = bounds.size();
-    coordinates = canonicalize_bounds(bounds.bounds());
+    coordinates = canonicalize_bounds(exported);
   }
 
   return {
@@ -315,6 +242,7 @@ BenchmarkResult run_benchmark(
       final_bounds,
       time_ms,
       points.empty() ? 0 : total_A / points.size(),
+      export_ms,
       std::move(coordinates)};
 }
 
@@ -326,10 +254,11 @@ void print_header(std::ostream& out) {
       << std::setw(5) << "p"
       << std::setw(10) << "|N|"
       << std::setw(12) << "|U(N)|"
-      << std::setw(14) << "Time (ms)"
+      << std::setw(14) << "Update (ms)"
+      << std::setw(14) << "Export (ms)"
       << std::setw(10) << "Avg |A|"
       << std::endl;
-  out << std::string(92, '-') << std::endl;
+  out << std::string(106, '-') << std::endl;
 }
 
 void print_result(std::ostream& out, const BenchmarkResult& r) {
@@ -341,6 +270,7 @@ void print_result(std::ostream& out, const BenchmarkResult& r) {
       << std::setw(10) << r.num_points
       << std::setw(12) << r.final_bounds
       << std::setw(14) << std::fixed << std::setprecision(2) << r.time_ms
+      << std::setw(14) << r.export_ms
       << std::setw(10) << std::fixed << std::setprecision(2) << r.avg_A
       << std::endl;
 }
@@ -461,7 +391,9 @@ void run_benchmarks_compare_all(
   }
 }
 
-int main(int /*argc*/, char* /*argv*/[]) try {
+int main(int argc, char*[]) try {
+  if (argc > 1) throw std::invalid_argument("Usage: benchmark");
+
   // Open results file
   std::ofstream results_file("benchmark_results.txt");
   if (!results_file) {

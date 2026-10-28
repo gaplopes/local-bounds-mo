@@ -16,12 +16,14 @@
 #include <cassert>
 #include <limits>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 #include <stdexcept>
 
 #include "dominance.hpp"
 #include "types.hpp"
+#include "../structures/lb_tree.hpp"
 
 namespace local_bounds {
 
@@ -244,10 +246,11 @@ class NeighborhoodBoundSet {
    * search zones — matching the output of Algorithms 2/3/5.
    */
   [[nodiscard]] std::vector<LocalBound<T>> nonredundant_bounds() const {
+    const auto quasi = classify_quasi_bounds();
     std::vector<LocalBound<T>> result;
     result.reserve(nodes_.size() - free_list_.size());
     for (std::size_t idx = 0; idx < nodes_.size(); ++idx) {
-      if (nodes_[idx].is_active && !is_quasi_nonredundant(idx)) {
+      if (nodes_[idx].is_active && !quasi[idx]) {
         result.push_back(nodes_[idx].bound);
       }
     }
@@ -267,13 +270,8 @@ class NeighborhoodBoundSet {
    * This count should match the output size of Algorithms 2/3/5 on the same input.
    */
   [[nodiscard]] std::size_t nonredundant_size() const {
-    std::size_t count = 0;
-    for (std::size_t idx = 0; idx < nodes_.size(); ++idx) {
-      if (nodes_[idx].is_active && !is_quasi_nonredundant(idx)) {
-        ++count;
-      }
-    }
-    return count;
+    const auto quasi = classify_quasi_bounds();
+    return size() - std::count(quasi.begin(), quasi.end(), true);
   }
 
   /**
@@ -370,13 +368,13 @@ class NeighborhoodBoundSet {
    */
   [[nodiscard]] AdjacencyGraph get_adjacency_graph(bool include_quasi = false) const {
     AdjacencyGraph graph;
-    std::vector<bool> quasi(nodes_.size(), false);
+    const auto quasi = classify_quasi_bounds();
     std::vector<std::size_t> internal_to_dense(nodes_.size(), npos);
     
     // 1. Assign dense IDs to valid non-redundant nodes
     for (std::size_t i = 0; i < nodes_.size(); ++i) {
       if (!nodes_[i].is_active) continue;
-      const bool is_quasi = quasi[i] = is_quasi_nonredundant(i);
+      const bool is_quasi = quasi[i];
       if (include_quasi || !is_quasi) {
         internal_to_dense[i] = graph.nodes.size();
         graph.nodes.push_back(nodes_[i].bound);
@@ -491,6 +489,13 @@ class NeighborhoodBoundSet {
     free_list_.push_back(idx);
   }
 
+  std::vector<bool> classify_quasi_bounds() const {
+    std::vector<bool> quasi(nodes_.size(), false);
+    for (std::size_t i = 0; i < nodes_.size(); ++i)
+      if (nodes_[i].is_active) quasi[i] = is_quasi_nonredundant(i);
+    return quasi;
+  }
+
   /**
    * @brief Tests global search-zone containment, retaining one equal-coordinate representative.
    *
@@ -500,7 +505,6 @@ class NeighborhoodBoundSet {
    */
   bool is_quasi_nonredundant(std::size_t idx) const {
     const auto& coordinates = nodes_[idx].bound.coordinates;
-    // TODO: quadratic global filtering; add a spatial index if classification dominates exports.
     for (std::size_t other = 0; other < nodes_.size(); ++other) {
       if (other == idx || !nodes_[other].is_active) continue;
       const auto& candidate = nodes_[other].bound.coordinates;

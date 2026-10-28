@@ -117,6 +117,11 @@ public:
    */
   [[nodiscard]] size_t Size() const { return item_count_; }
 
+  // Returns the maximum root-to-leaf node count, or zero for an empty tree.
+  [[nodiscard]] size_t Depth() const {
+    return item_count_ ? DepthRecursive(root_) : 0;
+  }
+
   // Returns the first match in GetAllBounds() order. The pointer remains valid
   // until the tree is modified; ordinal is its index in that export.
   [[nodiscard]] const Point *FindStrictlyDominated(const Point &z,
@@ -124,6 +129,16 @@ public:
     detail::validate_coordinates(z, p_);
     if (ordinal) *ordinal = 0;
     return root_ ? FindStrictlyDominatedRecursive(root_, z, ordinal) : nullptr;
+  }
+
+  /**
+   * @brief Tests whether a different coordinate vector weakly contains z's search zone.
+   *
+   * Equal-coordinate bounds do not count as proper containment.
+   */
+  [[nodiscard]] bool HasProperContainingBound(const Point &z) const {
+    detail::validate_coordinates(z, p_);
+    return root_ && HasProperContainingBoundRecursive(root_, z);
   }
 
   /**
@@ -138,11 +153,35 @@ public:
   }
 
 private:
+  size_t DepthRecursive(const Node *n) const {
+    size_t depth = 0;
+    for (const auto *child : n->children)
+      depth = std::max(depth, DepthRecursive(child));
+    return depth + 1;
+  }
+
+  bool HasProperContainingBoundRecursive(const Node *n, const Point &z) const {
+    if (n->worst_point.empty() || !weakly_dominates<T, Sense>(z, n->worst_point))
+      return false;
+    if (z != n->best_point && weakly_dominates<T, Sense>(z, n->best_point))
+      return true;
+    if (n->is_leaf()) {
+      for (const auto &candidate : n->L)
+        if (z != candidate && weakly_dominates<T, Sense>(z, candidate)) return true;
+    } else {
+      for (const auto *child : n->children)
+        if (HasProperContainingBoundRecursive(child, z)) return true;
+    }
+    return false;
+  }
+
   const Point *FindStrictlyDominatedRecursive(const Node *n, const Point &z,
                                              size_t *ordinal) const {
     // Containing queries must count preceding entries to preserve DFS IDs.
-    if (!ordinal && (n->worst_point.empty() || !strictly_inside(z, n->worst_point)))
+    if (n->worst_point.empty() || !strictly_inside(z, n->worst_point)) {
+      if (ordinal) *ordinal += n->subtree_size;
       return nullptr;
+    }
     if (n->is_leaf()) {
       for (const auto &u : n->L) {
         if (strictly_inside(z, u)) return &u;

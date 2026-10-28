@@ -57,10 +57,12 @@ if(BUILD_EXAMPLES)
 endif()
 
 # Benchmark
-option(BUILD_BENCHMARK "Build benchmark program" ON)
+option(BUILD_BENCHMARK "Build benchmark programs" ON)
 if(BUILD_BENCHMARK)
     add_executable(benchmark benchmark/benchmark.cpp)
     target_link_libraries(benchmark PRIVATE local_bounds)
+    add_executable(benchmark_lbtree benchmark/benchmark_lbtree.cpp)
+    target_link_libraries(benchmark_lbtree PRIVATE local_bounds)
 endif()
 
 # Installation

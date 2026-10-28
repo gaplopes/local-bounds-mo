@@ -21,6 +21,22 @@ def test_basic():
     assert bs.update_auto(p_dom) == (False, [])
     assert bs.size() == 3
 
+def test_tree_bounds_property():
+    for sense, reference, coordinates in (
+        (Objective.MINIMIZE, [10.0]*3, [1.0, 2.0, 3.0]),
+        (Objective.MAXIMIZE, [0.0]*3, [9.0, 8.0, 7.0]),
+    ):
+        bounds = BoundSetTree(reference, sense=sense)
+        initial = bounds.bounds
+        assert isinstance(initial, list)
+        assert [b.coordinates for b in initial] == [reference]
+        updated, _ = bounds.update_re(Point("p1", coordinates))
+        assert updated
+        assert isinstance(bounds.bounds, list)
+        assert len(bounds.bounds) == bounds.size() == 3
+        assert [b.coordinates for b in initial] == [reference]
+
+
 def test_neighborhood():
     print("Testing NeighborhoodBoundSet...")
     ref = [10.0, 10.0, 10.0]
@@ -108,7 +124,37 @@ def test_update_results():
                             assert sorted(snapshot(b) for b in dominated) == expected
 
 
+def test_indexed_neighborhood_exports():
+    for sense in (Objective.MINIMIZE, Objective.MAXIMIZE):
+        def orient(coordinates):
+            return [(x if sense == Objective.MINIMIZE else 100000 - x) / 4
+                    for x in coordinates]
+
+        bounds = NeighborhoodBoundSet(orient([100000]*3), orient([0]*3), sense=sense)
+        for i in range(1, 1601):
+            bounds.update(Point(f"p{i}", orient([10*i, 100000 - 10*i,
+                                                 10*(1 + (37*i) % 9999)])))
+        exported = bounds.nonredundant_bounds()
+        raw = bounds.get_adjacency_graph(True)
+        clean = bounds.get_adjacency_graph()
+        assert bounds.size() == bounds.nonredundant_size() == len(exported) == 3201
+        assert not any(raw.quasi)
+        expected = [(b.id, b.coordinates) for b in exported]
+        assert [(b.id, b.coordinates) for b in raw.nodes] == expected
+        assert [(b.id, b.coordinates) for b in clean.nodes] == expected
+        assert raw.adjacency_list == clean.adjacency_list
+        assert raw.k_neighbors == clean.k_neighbors
+
+        bounds.update(Point("collapse", orient([1, 1, 1])))
+        assert bounds.size() == bounds.nonredundant_size() == 3
+        bounds.update(Point("reuse", orient([0, 2, 2])))
+        assert len(bounds.nonredundant_bounds()) == bounds.nonredundant_size()
+        assert len(bounds.get_adjacency_graph().nodes) == bounds.nonredundant_size()
+
+
 if __name__ == "__main__":
     test_basic()
+    test_tree_bounds_property()
     test_neighborhood()
     test_update_results()
+    test_indexed_neighborhood_exports()
