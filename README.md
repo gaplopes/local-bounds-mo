@@ -232,6 +232,11 @@ local-bounds-mo/
 │   ├── bindings.cpp                  # nanobind C++ bindings
 │   └── local_bounds/
 │       └── __init__.py               # Python package with unified API
+├── visualization/
+│   ├── README.md                     # Dashboard, CLI, and visualization API guide
+│   ├── app.py                        # Interactive Flask dashboard
+│   ├── cli.py                        # Standalone HTML reports
+│   └── engine.py                     # Shared plotting and bounds extraction
 ├── tests/
 │   ├── test_dominance.cpp            # Dominance relation tests
 │   ├── test_bound_set.cpp            # BoundSet tests
@@ -496,98 +501,9 @@ class BoundSetTree:
 
 ## Visualization & Interactive Dashboard
 
-The library provides comprehensive 2D and 3D visualization tools, neighbor graph rendering, local bounds tables, and an interactive dashboard mirroring the figures from Klamroth et al. (2015) and Dächert et al. (2017).
+The [`visualization/`](visualization/) tool provides an interactive dashboard, standalone HTML reports, and a Python plotting API for exploring local bounds in 2D and 3D. It includes spatial views, neighborhood graphs, defining-point tables, and step-by-step point insertions, with presets from both papers.
 
-All visualization code is organized in the [`visualization/`](visualization/) package with HTML templates decoupled in `visualization/templates/index.html`.
-
-### Prerequisites & Installation
-
-To run the visualization dashboard or generate reports, make sure your virtual environment has the required dependencies:
-
-```bash
-# 1. Activate your virtual environment
-source venv/bin/activate
-
-# 2. Install the current library and visualization dependencies
-python -m pip install -e ".[vis]"
-```
-
-For development, the editable install loads the Python wrapper from this checkout. Rerun the install command after changing C++ headers or bindings to rebuild the native extension. Running the dashboard from the checkout with an older installed library can otherwise produce missing attributes or incompatible graph-export arguments.
-
-`visualization/requirements.txt` installs only visualization dependencies (Flask, Plotly, NetworkX, and NumPy); it does not install or rebuild the library.
-
-### Interactive Web Dashboard
-
-Launch the interactive dashboard:
-
-```bash
-python -m visualization.app --port 8050
-```
-
-Open `http://127.0.0.1:8050` in your browser. Features include:
-- **In-Place Problem Configuration**: Directly switch between 2D and 3D, toggle Minimization ($U(N)$) vs Maximization ($L(N)$), and customize Lower Bound ($LB$) and Upper Bound ($UB$) search spaces without intrusive popups.
-- **Custom Instances**: Click **New custom instance** beside the dimension selector to start empty with the displayed dimension, sense, and interval bounds, then enter points. Applying settings or loading a preset starts a new problem and resets the views.
-- **Strict Point Validation**: Automatically checks for dimension matching, finite coordinates, search space containment ($[LB, UB)$ for minimization, $(LB, UB]$ for maximization), duplicate points, and Pareto dominance violations (points dominated by $N$ or dominating existing points in $N$) with clean, non-intrusive inline error banners.
-- **Generation Timeline Slider**: Step forward and backward through point insertions, tracking destroyed, created, and persistent bounds.
-- **3D & 2D Spatial Views**:
-  - 3D view: Translucent (30% opacity by default), uniquely color-coded Pareto dominance cones $D(z) = [z, M]$ (matching Fig. 2 in Klamroth et al. 2015), opposite-axis camera perspective (looking from Ideal $m$ towards Nadir $M$), real-time interactive opacity slider, and single unified legend entry for one-click toggling.
-  - Centered Pairwise 2D Projections: Centered matrix of projections $(f_1, f_2)$, $(f_1, f_3)$, $(f_2, f_3)$ showing bounding boxes.
-  - 2D view: 2D search rectangles and staircase Pareto front.
-- **View Controls**: Camera, zoom, and surviving graph node positions persist while stepping or highlighting. Spatial and pairwise views retain their own zoom. Use **Wireframe** to remove filled 3D faces and **Labels** to show all labels by default or hide them. Labels use white boxes with dark 12 px text; the reference labels are **m** and **M**. Coincident pairwise markers are grouped; clicking a bound group offers each underlying bound for selection.
-- **Neighbor Graph Visualization**: Choose contracted adjacency or the raw Algorithm 1 graph, retaining quasi-bounds as labeled ellipses. Both views show total, quasi, and nonredundant counts and support component arrows or undirected edges. `get_adjacency_graph(include_quasi=True)` exports the raw topology and per-node `quasi` flags.
-- **Membership Probe**: Check a point at the selected step without inserting it. The dashboard identifies and highlights a nonredundant containing bound and displays exact search-zone inequalities, including the strict reference-side boundary.
-
-The dashboard computes history from bound IDs without building unused graph snapshots. It retains up to eight step snapshots and eight serialized figures, keyed by problem settings, ordered point IDs/coordinates, and view options; every API mutation clears these caches. Public step data is copied to keep snapshots independent. The CLI constructs only the final state unless `--step-by-step` is requested.
-
-CLI HTML reports embed Plotly and work offline. The interactive dashboard serves Plotly locally but currently requires internet access for Tailwind, Lucide, and Vis-Network CDN assets; bundling those dashboard dependencies remains a deployment enhancement.
-- **Local Bounds Table**: Displays coordinates $u$, defining points $z^j(u)$ (e.g. $z^1, z^2, z^3$), and neighbor pointers $\nu_k(u)$, with cross-highlighting across scenes and graphs.
-- **Preset Library**: One-click presets for Paper 2 Example 2.8, Paper 1 Example 2 (SA), Paper 1 Example 3 (NGP Ties), 2D, and 3D Maximization.
-
-### Command-Line Visualization Script
-
-Generate standalone HTML reports from terminal:
-
-```bash
-# 3D with Paper 2 Example 2.8 preset and step-by-step terminal output
-python -m visualization.cli --dim 3 --preset paper2 --step-by-step --output report_3d.html
-
-# 2D example
-python -m visualization.cli --dim 2 --preset 2d --step-by-step --output report_2d.html
-
-# Custom points
-python -m visualization.cli --dim 3 --points "[[4,0,4],[3,3,1],[2,2,2]]" --output custom.html
-
-# Or launch the dashboard directly via CLI
-python -m visualization.cli --interactive --port 8050
-```
-
-### Python API Visualization
-
-```python
-import local_bounds as lb
-import visualization.engine as vis
-
-# Initialize bound set
-nbs = lb.NeighborhoodBoundSet([10.0, 10.0, 10.0], [0.0, 0.0, 0.0])
-nbs.update(lb.Point("z1", [4.0, 0.0, 4.0]))
-nbs.update(lb.Point("z2", [3.0, 3.0, 1.0]))
-nbs.update(lb.Point("z3", [2.0, 2.0, 2.0]))
-
-# Extract bounds, defining points, and neighbor relationships
-data = vis.extract_bounds_data(nbs, [10.0, 10.0, 10.0], [0.0, 0.0, 0.0])
-
-# Generate bounds table
-table = vis.create_bounds_table(data)
-
-# Generate Plotly figures
-fig_3d = vis.plot_3d_bounds(data, show_occupied_boxes=True)
-fig_graph = vis.plot_neighbor_graph_plotly(data, mode="combined")
-
-# Show or export
-fig_3d.write_html("bounds_3d.html")
-fig_graph.write_html("graph.html")
-```
-
+See the [visualization guide](visualization/README.md) for installation, dashboard usage, CLI options, Python examples, and troubleshooting.
 
 ## Benchmarks
 
