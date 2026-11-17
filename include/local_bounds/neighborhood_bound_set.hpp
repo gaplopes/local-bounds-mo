@@ -127,7 +127,7 @@ class NeighborhoodBoundSet {
       // Create children
       for (std::size_t i : I) {
         LocalBound<T> ui_bound = nodes_[u_idx].bound;
-        ui_bound.id = ui_bound.id + std::to_string(i + 1);
+        ui_bound.id = detail::child_bound_id(ui_bound.id, i, dimensions_);
         ui_bound.coordinates[i] = z_bar.coordinates[i];
         if (!ui_bound.defining_points.empty()) {
           ui_bound.defining_points[i] = z_bar;
@@ -491,8 +491,22 @@ class NeighborhoodBoundSet {
 
   std::vector<bool> classify_quasi_bounds() const {
     std::vector<bool> quasi(nodes_.size(), false);
+    std::vector<std::size_t> active;
+    active.reserve(size());
     for (std::size_t i = 0; i < nodes_.size(); ++i)
-      if (nodes_[i].is_active) quasi[i] = is_quasi_nonredundant(i);
+      if (nodes_[i].is_active) active.push_back(i);
+    for (std::size_t idx : active) {
+      const auto& coordinates = nodes_[idx].bound.coordinates;
+      for (std::size_t other : active) {
+        if (other == idx) continue;
+        const auto& candidate = nodes_[other].bound.coordinates;
+        if (weakly_dominates<T, Sense>(coordinates, candidate) &&
+            (coordinates != candidate || other < idx)) {
+          quasi[idx] = true;
+          break;
+        }
+      }
+    }
     return quasi;
   }
 

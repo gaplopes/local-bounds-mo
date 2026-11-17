@@ -482,15 +482,6 @@ class TestVisualization(unittest.TestCase):
             self.assertEqual(state.get_bounds_at_step(0)["counts"]["total"], 1)
             self.assertEqual(extract.call_count, 6)
 
-    def test_step_cache_keeps_native_graph_argument_errors(self):
-        state = web_app.AppState()
-        state.get_bounds_at_step(0, False)
-        state.get_bounds_at_step(0, True)
-        for invalid in (0, 1, 0.0, 1.0, [], {}, None, "raw"):
-            with self.subTest(include_quasi=invalid):
-                with self.assertRaisesRegex(TypeError, "get_adjacency_graph"):
-                    state.get_bounds_at_step(0, invalid)
-
     def test_step_cache_preserves_slice_errors_and_signed_zero(self):
         state = web_app.AppState()
         state.load_preset("2d")

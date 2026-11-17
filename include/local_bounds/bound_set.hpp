@@ -387,7 +387,7 @@ private:
         if (!dominates) {
           std::vector<T> new_coords = u.coordinates;
           new_coords[j] = point.coordinates[j];
-          std::string new_id = u.id + std::to_string(j + 1);
+          std::string new_id = detail::child_bound_id(u.id, j, dimensions_);
           P.emplace_back(new_id, std::move(new_coords));
         }
       }
@@ -501,7 +501,7 @@ private:
         if (!redundant) {
           std::vector<T> new_coords = u.coordinates;
           new_coords[j] = point.coordinates[j];
-          std::string new_id = u.id + std::to_string(j + 1);
+          std::string new_id = detail::child_bound_id(u.id, j, dimensions_);
           P[j].emplace_back(new_id, std::move(new_coords));
         }
       }
@@ -601,7 +601,7 @@ private:
 
         if (keep) {
           // Let u_j = (z̄_j, u_{-j})
-          std::string new_id = u.id + std::to_string(j + 1);
+          std::string new_id = detail::child_bound_id(u.id, j, dimensions_);
           std::vector<T> new_coords = u.coordinates;
           new_coords[j] = z_bar.coordinates[j];
 
@@ -729,7 +729,7 @@ private:
 
         if (keep) {
           // Let u_j = (z̄_j, u_{-j})
-          std::string new_id = u.id + std::to_string(j + 1);
+          std::string new_id = detail::child_bound_id(u.id, j, dimensions_);
           std::vector<T> new_coords = u.coordinates;
           new_coords[j] = z_bar.coordinates[j];
 
@@ -803,7 +803,7 @@ private:
     for (std::size_t idx : A_idx) {
       const auto &u = current_bounds[idx];
       for (std::size_t j = 0; j < dimensions_; ++j) {
-        std::string new_id = u.id + std::to_string(j + 1);
+        std::string new_id = detail::child_bound_id(u.id, j, dimensions_);
         std::vector<T> new_coords = u.coordinates;
         new_coords[j] = point.coordinates[j];
         new_bounds.emplace_back(new_id, std::move(new_coords));

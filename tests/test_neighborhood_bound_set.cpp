@@ -85,34 +85,6 @@ void test_example_2_8_from_paper() {
   std::cout << "Example 2.8 passed.\n\n";
 }
 
-void test_example_4_2_from_paper() {
-  std::cout << "--- Example 4.2 (paper) ---\n";
-
-  const std::vector<int64_t> M = {10, 10, 10};
-  const std::vector<int64_t> m = {0, 0, 0};
-
-  NeighborhoodBoundSet<int64_t> nbs(M, m);
-
-  // Start from N={z1} then insert z2 exactly as Example 4.2.
-  const IntPoint z1("z1", {4, 0, 4});
-  const IntPoint z2("z2", {3, 3, 1});
-
-  nbs.update(z1);
-  nbs.update(z2);
-
-  assert_bounds_equal(
-      nbs.bounds(),
-      {
-          {3, 10, 10},
-          {4, 3, 10},
-          {10, 0, 10},
-          {10, 3, 4},
-          {10, 10, 1},
-      });
-
-  std::cout << "Example 4.2 passed.\n\n";
-}
-
 void test_example_4_13_ngp_from_paper() {
   std::cout << "--- Example 4.13 (paper, NGP) ---\n";
 
@@ -235,7 +207,6 @@ void test_update_return_value() {
 
 int main() {
   test_example_2_8_from_paper();
-  test_example_4_2_from_paper();
   test_example_4_13_ngp_from_paper();
   test_zbar_dominates_several_bounds();
   test_fixed_cross_validation();

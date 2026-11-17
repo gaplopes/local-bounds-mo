@@ -46,9 +46,9 @@ RE also scans current bounds to build the per-coordinate B_j sets, and general-c
 
 **Algorithm 1** (Paper 2) traverses the affected region through a neighborhood graph. The paper's O(|U_z̄|) bound assumes a containing bound is supplied. This implementation first scans allocated node storage and initializes a visitation array over that storage. For fixed p, an update therefore has O(C + |U_z̄|) overhead, where C is the allocated node capacity (including inactive slots).
 
-`nonredundant_bounds()`, `nonredundant_size()`, and `get_adjacency_graph()` share global pairwise containment classification across allocated storage to handle tied-coordinate aliases correctly, retaining the first active slot for equal-coordinate bounds. The graph and update algorithm retain all active nodes, including quasi-nonredundant ones. Each call owns its classification mask; copies and subsequent updates require no cache invalidation. Standalone `get_clean_neighbors()` performs containment scans for the nodes it visits.
+`nonredundant_bounds()`, `nonredundant_size()`, and `get_adjacency_graph()` share global pairwise containment classification of active bounds to handle tied-coordinate aliases correctly, retaining the first active slot for equal-coordinate bounds. The graph and update algorithm retain all active nodes, including quasi-nonredundant ones. Each call owns its classification mask; copies and subsequent updates require no cache invalidation. Standalone `get_clean_neighbors()` performs containment scans for the nodes it visits.
 
-Classification takes O(p·C²) time in the worst case and O(C) temporary storage for the mask, where C includes inactive slots. Graph export also traverses and materializes adjacency, which can be dense. The benchmark reports exports separately from updates.
+Classification scans C allocated slots once to collect L active indices in ascending order, then compares only active bounds. It takes O(C + p·L²) time, O(C) temporary storage for the mask, and O(L) storage for the indices. Contracted graph export still initializes a C-sized visitation mask per exported node and traverses and materializes adjacency, which can be dense. The benchmark reports exports separately from updates.
 
 Where:
 - |U(N)| is the total number of local bounds

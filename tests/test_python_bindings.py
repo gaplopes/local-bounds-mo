@@ -124,6 +124,43 @@ def test_update_results():
                             assert sorted(snapshot(b) for b in dominated) == expected
 
 
+def test_high_dimensional_bound_ids():
+    # Objective paths "11" and "1,1" collide without separators.
+    coordinates = [[10]*11, [5] + [20]*10]
+    cases = [(BoundSet, ["update_re", "update_re_enhanced", "update_ra_sa",
+                         "update_ra", "update_naive", "update_auto"]),
+             (NeighborhoodBoundSet, ["update"])]
+    for sense in (Objective.MINIMIZE, Objective.MAXIMIZE):
+        def orient(values):
+            return values if sense == Objective.MINIMIZE else [100 - x for x in values]
+
+        for cls, methods in cases:
+            for method in methods:
+                bounds = cls(orient([100]*11), orient([0]*11), sense=sense)
+                for i, values in enumerate(coordinates):
+                    getattr(bounds, method)(Point(f"p{i}", orient(values)))
+                exported = bounds.bounds
+                exported = exported() if callable(exported) else exported
+                assert len(exported) == 21
+                assert len({b.id for b in exported}) == len(exported), (cls.__name__, method, sense)
+
+
+def test_neighborhood_equal_coordinate_representative():
+    for sense in (Objective.MINIMIZE, Objective.MAXIMIZE):
+        def orient(values):
+            return values if sense == Objective.MINIMIZE else [6 - x for x in values]
+
+        bounds = NeighborhoodBoundSet(orient([6]*3), orient([0]*3), sense=sense)
+        for i, values in enumerate([[4,4,5], [3,3,4], [3,4,1], [3,2,2], [3,1,5], [1,3,5]]):
+            bounds.update(Point(f"p{i}", orient(values)))
+        raw = bounds.get_adjacency_graph(True)
+        coordinates = orient([3,3,6])
+        aliases = [(b.id, quasi) for b, quasi in zip(raw.nodes, raw.quasi)
+                   if b.coordinates == coordinates]
+        assert [quasi for _, quasi in aliases] == [False, True]
+        assert [b.id for b in bounds.nonredundant_bounds() if b.coordinates == coordinates] == [aliases[0][0]]
+
+
 def test_indexed_neighborhood_exports():
     for sense in (Objective.MINIMIZE, Objective.MAXIMIZE):
         def orient(coordinates):
@@ -157,4 +194,6 @@ if __name__ == "__main__":
     test_tree_bounds_property()
     test_neighborhood()
     test_update_results()
+    test_high_dimensional_bound_ids()
+    test_neighborhood_equal_coordinate_representative()
     test_indexed_neighborhood_exports()

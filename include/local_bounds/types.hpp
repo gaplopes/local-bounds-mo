@@ -224,6 +224,16 @@ struct LocalBound {
   }
 };
 
+namespace detail {
+
+inline std::string child_bound_id(const std::string& parent_id,
+                                  std::size_t component, std::size_t dimensions) {
+  // Separate multi-digit objective paths while preserving existing single-digit IDs.
+  return parent_id + (dimensions >= 10 ? "." : "") + std::to_string(component + 1);
+}
+
+}  // namespace detail
+
 /// Update status and owned snapshots of the strictly dominated old bounds.
 template <typename T>
 using UpdateResult = std::pair<bool, std::vector<LocalBound<T>>>;
