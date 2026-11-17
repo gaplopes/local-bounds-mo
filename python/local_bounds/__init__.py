@@ -18,78 +18,32 @@ def _normalize_sense(sense):
     return sense
 
 
-class BoundSet:
-    def __init__(self, reference_point, anti_reference=None, sense=Objective.MINIMIZE):
-        sense = _normalize_sense(sense)
-        self.sense = sense
-        if sense == Objective.MINIMIZE:
-            if anti_reference is not None:
-                self._impl = BoundSetMinimize(reference_point, anti_reference)
-            else:
-                self._impl = BoundSetMinimize(reference_point)
-        else:
-            if anti_reference is not None:
-                self._impl = BoundSetMaximize(reference_point, anti_reference)
-            else:
-                self._impl = BoundSetMaximize(reference_point)
+def _pick(sense, minimize, maximize):
+    return minimize if _normalize_sense(sense) == Objective.MINIMIZE else maximize
 
-    def update_auto(self, point): return self._impl.update_auto(point)
-    def update_re(self, point): return self._impl.update_re(point)
-    def update_re_enhanced(self, point): return self._impl.update_re_enhanced(point)
-    def update_ra_sa(self, point): return self._impl.update_ra_sa(point)
-    def update_ra(self, point): return self._impl.update_ra(point)
-    def update_naive(self, point): return self._impl.update_naive(point)
-    def size(self): return self._impl.size()
-    def dimensions(self): return self._impl.dimensions()
-    def is_in_search_region(self, point): return self._impl.is_in_search_region(point)
-    def find_containing_bound(self, point): return self._impl.find_containing_bound(point)
-    @property
-    def bounds(self): return self._impl.bounds
 
-class NeighborhoodBoundSet:
-    def __init__(self, reference_point, anti_reference, sense=Objective.MINIMIZE):
-        sense = _normalize_sense(sense)
-        self.sense = sense
-        if sense == Objective.MINIMIZE:
-            self._impl = NeighborhoodBoundSetMinimize(reference_point, anti_reference)
-        else:
-            self._impl = NeighborhoodBoundSetMaximize(reference_point, anti_reference)
+# The C++ classes take the sense as a template parameter, so _core has one
+# class per sense. These factories return an instance of the matching one.
 
-    def update(self, point): return self._impl.update(point)
-    def size(self): return self._impl.size()
-    def nonredundant_size(self): return self._impl.nonredundant_size()
-    def dimensions(self): return self._impl.dimensions()
-    def is_in_search_region(self, point): return self._impl.is_in_search_region(point)
-    def find_containing_bound(self, point): return self._impl.find_containing_bound(point)
-    def bounds(self): return self._impl.bounds()
-    def nonredundant_bounds(self): return self._impl.nonredundant_bounds()
-    def get_adjacency_graph(self, include_quasi=False): return self._impl.get_adjacency_graph(include_quasi)
+def BoundSet(reference_point, anti_reference=None, sense=Objective.MINIMIZE):
+    cls = _pick(sense, BoundSetMinimize, BoundSetMaximize)
+    if anti_reference is None:
+        return cls(reference_point)
+    return cls(reference_point, anti_reference)
 
-class BoundSetTree:
-    def __init__(self, reference_point, anti_reference=None, max_leaf_size=32, num_children=8, sense=Objective.MINIMIZE):
-        sense = _normalize_sense(sense)
-        self.sense = sense
-        if sense == Objective.MINIMIZE:
-            if anti_reference is not None:
-                self._impl = BoundSetTreeMinimize(reference_point, anti_reference, max_leaf_size, num_children)
-            else:
-                self._impl = BoundSetTreeMinimize(reference_point, max_leaf_size, num_children)
-        else:
-            if anti_reference is not None:
-                self._impl = BoundSetTreeMaximize(reference_point, anti_reference, max_leaf_size, num_children)
-            else:
-                self._impl = BoundSetTreeMaximize(reference_point, max_leaf_size, num_children)
 
-    def update_auto(self, point): return self._impl.update_auto(point)
-    def update_re(self, point): return self._impl.update_re(point)
-    def update_re_enhanced(self, point): return self._impl.update_re_enhanced(point)
-    def update_naive(self, point): return self._impl.update_naive(point)
-    def size(self): return self._impl.size()
-    def dimensions(self): return self._impl.dimensions()
-    def is_in_search_region(self, point): return self._impl.is_in_search_region(point)
-    def find_containing_bound(self, point): return self._impl.find_containing_bound(point)
-    @property
-    def bounds(self): return self._impl.bounds()
+def NeighborhoodBoundSet(reference_point, anti_reference, sense=Objective.MINIMIZE):
+    cls = _pick(sense, NeighborhoodBoundSetMinimize, NeighborhoodBoundSetMaximize)
+    return cls(reference_point, anti_reference)
+
+
+def BoundSetTree(reference_point, anti_reference=None, max_leaf_size=32, num_children=8,
+                 sense=Objective.MINIMIZE):
+    cls = _pick(sense, BoundSetTreeMinimize, BoundSetTreeMaximize)
+    if anti_reference is None:
+        return cls(reference_point, max_leaf_size, num_children)
+    return cls(reference_point, anti_reference, max_leaf_size, num_children)
+
 
 __all__ = [
     "Objective",

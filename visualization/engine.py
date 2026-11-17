@@ -202,11 +202,25 @@ def extract_bounds_data(
         if hasattr(bound_set, "nonredundant_bounds"):
             raw_bounds = bound_set.nonredundant_bounds()
         elif hasattr(bound_set, "bounds"):
-            raw_bounds = bound_set.bounds
+            raw_bounds = bound_set.bounds()
         else:
             raw_bounds = []
         adj_list = [[] for _ in raw_bounds]
         k_neighbors = [[None] * dims for _ in raw_bounds]
+
+    is_min = (sense == lb.Objective.MINIMIZE or sense == "MINIMIZE")
+    # Dummy points z_hat^j = (M_j, m_-j) first, then the inserted points.
+    candidates = [(f"z_hat{j+1}", [reference_point[k] if k == j else anti_reference[k] for k in range(dims)])
+                  for j in range(dims)]
+    candidates += [(p.id or "dummy", list(p.coordinates)) for p in (points or [])]
+
+    def defining_point(u, j):
+        """First z with z_j = u_j that is strictly better than u elsewhere; '-' if none is known."""
+        for raw_id, z in candidates:
+            if z[j] == u[j] and all((z[k] < u[k]) if is_min else (z[k] > u[k])
+                                    for k in range(dims) if k != j):
+                return {"id": format_point_name(raw_id), "raw_id": raw_id, "coordinates": z}
+        return {"id": "-", "raw_id": "", "coordinates": []}
 
     bound_records: List[BoundRecord] = []
     NPOS = 18446744073709551615
@@ -224,7 +238,8 @@ def extract_bounds_data(
                     "coordinates": list(p.coordinates)
                 })
         else:
-            def_pts_info = [{"id": f"z^{j+1}", "raw_id": f"z_{j+1}", "coordinates": []} for j in range(dims)]
+            # No stored defining points (e.g. BoundSet after RE): derive them from the definition.
+            def_pts_info = [defining_point(list(b.coordinates), j) for j in range(dims)]
 
         # Extract neighbors
         node_neighbors: List[Optional[int]] = []
@@ -266,7 +281,6 @@ def extract_bounds_data(
     edges_undirected = sorted({(min(u, v), max(u, v)) for u, v in adjacency
                                if u != v and 0 <= v < len(bound_records)})
 
-    is_min = (sense == lb.Objective.MINIMIZE or sense == "MINIMIZE")
     if lower_bound is None or upper_bound is None:
         if is_min:
             computed_lb = list(anti_reference)

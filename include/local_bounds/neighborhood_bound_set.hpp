@@ -34,6 +34,12 @@ namespace local_bounds {
  * relation to efficiently update the search region. It supports both minimization
  * and maximization problems, and includes full handling for General Case position.
  *
+ * Bounds carry the defining points z^i(u) of the paper in defining_points.
+ * With tied coordinates these follow the paper's insertion-order tie-breaking
+ * (Section 4.3, eq. (6)): z^i(u) may equal u in another component, so it can
+ * differ from the strict sets Z^i(u) that BoundSet::update_ra() maintains.
+ * defining_point_sets stays empty; Algorithm 1 does not maintain those sets.
+ *
  * @tparam T The numeric type for coordinates (e.g., int64_t, double).
  * @tparam Sense Objective sense (MINIMIZE or MAXIMIZE).
  */
@@ -56,7 +62,9 @@ class NeighborhoodBoundSet {
         reference_point_(reference_point),
         anti_reference_(anti_reference) {
     detail::validate_interval<T, Sense>(reference_point, anti_reference);
-    allocate_node(LocalBound<T>::initial(reference_point_, anti_reference_, "u0"));
+    auto root = LocalBound<T>::initial(reference_point_, anti_reference_, "u0");
+    root.defining_point_sets.clear();
+    allocate_node(std::move(root));
   }
 
   /**
@@ -105,6 +113,7 @@ class NeighborhoodBoundSet {
       O.pop_back();
 
       std::vector<std::size_t> I;
+      std::vector<bool> tied;  // tied[n]: (C2) held with equality for I[n]
       for (std::size_t i = 0; i < dimensions_; ++i) {
         std::size_t neighbor_idx = nodes_[u_idx].neighbors[i];
         T neighbor_val;
@@ -121,22 +130,22 @@ class NeighborhoodBoundSet {
         } else {
           keep = z_bar.coordinates[i] <= neighbor_val;
         }
-        if (keep) I.push_back(i);
+        if (keep) {
+          I.push_back(i);
+          tied.push_back(z_bar.coordinates[i] == neighbor_val);
+        }
       }
 
       // Create children
-      for (std::size_t i : I) {
+      for (std::size_t n = 0; n < I.size(); ++n) {
+        const std::size_t i = I[n];
         LocalBound<T> ui_bound = nodes_[u_idx].bound;
         ui_bound.id = detail::child_bound_id(ui_bound.id, i, dimensions_);
         ui_bound.coordinates[i] = z_bar.coordinates[i];
-        if (!ui_bound.defining_points.empty()) {
-          ui_bound.defining_points[i] = z_bar;
-        }
-        if (!ui_bound.defining_point_sets.empty()) {
-          ui_bound.defining_point_sets[i] = {z_bar};
-        }
-        
+        ui_bound.defining_points[i] = z_bar;  // the others are inherited from u
+
         std::size_t ui_idx = allocate_node(std::move(ui_bound));
+        nodes_[ui_idx].tie = tied[n] || nodes_[u_idx].tie;
         nodes_[u_idx].children[i] = ui_idx;
         B.push_back({ui_idx, u_idx, i});
       }
@@ -347,7 +356,8 @@ class NeighborhoodBoundSet {
    * @return std::vector<std::size_t> A list of valid, non-redundant neighbor indices.
    */
   [[nodiscard]] std::vector<std::size_t> get_clean_neighbors(std::size_t node_idx) const {
-    return get_clean_neighbors_impl(node_idx, nullptr);
+    std::vector<bool> visited(nodes_.size(), false);
+    return get_clean_neighbors_impl(node_idx, nullptr, visited);
   }
 
   struct AdjacencyGraph {
@@ -370,6 +380,7 @@ class NeighborhoodBoundSet {
     AdjacencyGraph graph;
     const auto quasi = classify_quasi_bounds();
     std::vector<std::size_t> internal_to_dense(nodes_.size(), npos);
+    std::vector<bool> visited(nodes_.size(), false);
     
     // 1. Assign dense IDs to valid non-redundant nodes
     for (std::size_t i = 0; i < nodes_.size(); ++i) {
@@ -390,7 +401,7 @@ class NeighborhoodBoundSet {
       if (internal_to_dense[i] != npos) {
         std::size_t dense_u = internal_to_dense[i];
         std::vector<std::size_t> clean_internal = include_quasi
-            ? nodes_[i].neighbors : get_clean_neighbors_impl(i, &quasi);
+            ? nodes_[i].neighbors : get_clean_neighbors_impl(i, &quasi, visited);
         std::vector<std::size_t> dense_neighbors;
         dense_neighbors.reserve(clean_internal.size());
         for (std::size_t internal_nb : clean_internal) {
@@ -418,12 +429,13 @@ class NeighborhoodBoundSet {
   }
 
  private:
+  // visited must be all false on entry and is all false again on return.
   [[nodiscard]] std::vector<std::size_t> get_clean_neighbors_impl(
-      std::size_t node_idx, const std::vector<bool>* quasi) const {
+      std::size_t node_idx, const std::vector<bool>* quasi,
+      std::vector<bool>& visited) const {
     if (!is_active(node_idx)) throw std::out_of_range("Node must be active");
     std::vector<std::size_t> clean_neighbors;
     std::vector<std::size_t> to_visit;
-    std::vector<bool> visited(nodes_.size(), false);
 
     visited[node_idx] = true;
     for (std::size_t n : nodes_[node_idx].neighbors) {
@@ -446,6 +458,8 @@ class NeighborhoodBoundSet {
         }
       }
     }
+    visited[node_idx] = false;
+    for (std::size_t n : to_visit) visited[n] = false;
     return clean_neighbors;
   }
 
@@ -454,6 +468,9 @@ class NeighborhoodBoundSet {
     std::vector<std::size_t> neighbors;
     std::vector<std::size_t> children;
     bool is_active = false;
+    // Created where (C2) held with equality, or descends from such a bound.
+    // Only these bounds can be quasi-nonredundant.
+    bool tie = false;
   };
 
   std::size_t dimensions_;
@@ -469,6 +486,7 @@ class NeighborhoodBoundSet {
       free_list_.pop_back();
       nodes_[idx].bound = std::move(bound);
       nodes_[idx].is_active = true;
+      nodes_[idx].tie = false;
       std::fill(nodes_[idx].children.begin(), nodes_[idx].children.end(), npos);
       std::fill(nodes_[idx].neighbors.begin(), nodes_[idx].neighbors.end(), npos);
       return idx;
@@ -491,22 +509,8 @@ class NeighborhoodBoundSet {
 
   std::vector<bool> classify_quasi_bounds() const {
     std::vector<bool> quasi(nodes_.size(), false);
-    std::vector<std::size_t> active;
-    active.reserve(size());
     for (std::size_t i = 0; i < nodes_.size(); ++i)
-      if (nodes_[i].is_active) active.push_back(i);
-    for (std::size_t idx : active) {
-      const auto& coordinates = nodes_[idx].bound.coordinates;
-      for (std::size_t other : active) {
-        if (other == idx) continue;
-        const auto& candidate = nodes_[other].bound.coordinates;
-        if (weakly_dominates<T, Sense>(coordinates, candidate) &&
-            (coordinates != candidate || other < idx)) {
-          quasi[idx] = true;
-          break;
-        }
-      }
-    }
+      if (nodes_[i].is_active) quasi[i] = is_quasi_nonredundant(i);
     return quasi;
   }
 
@@ -516,8 +520,14 @@ class NeighborhoodBoundSet {
    * Raw quasi-bounds stay in the graph to preserve connectivity. Equal-coordinate
    * aliases can hide a containing zone beyond the immediate neighbors, so exports
    * must compare against every active bound.
+   *
+   * A bound whose ancestry never met a tie in (C2) is nonredundant, so only
+   * tie-born bounds pay for the comparison. Reason: without a tie, every
+   * inherited defining point stays strictly below the new coordinate, so the
+   * bound satisfies (P1) and (P3) and is a local upper bound (Corollary 2.6).
    */
   bool is_quasi_nonredundant(std::size_t idx) const {
+    if (!nodes_[idx].tie) return false;
     const auto& coordinates = nodes_[idx].bound.coordinates;
     for (std::size_t other = 0; other < nodes_.size(); ++other) {
       if (other == idx || !nodes_[other].is_active) continue;

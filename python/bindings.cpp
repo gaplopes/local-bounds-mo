@@ -8,6 +8,69 @@
 namespace nb = nanobind;
 using namespace local_bounds;
 
+// The C++ classes take the objective sense as a template parameter, so each is
+// bound once per sense. python/local_bounds/__init__.py picks one by `sense`.
+template <Objective Sense>
+void bind_sense(nb::module_& m, const char* set_name, const char* tree_name,
+                const char* neighborhood_name, const char* graph_name) {
+    using Set = BoundSet<double, Sense>;
+    using Tree = BoundSetTree<double, Sense>;
+    using Neighborhood = NeighborhoodBoundSet<double, Sense>;
+    using Graph = typename Neighborhood::AdjacencyGraph;
+    using Coordinates = const std::vector<double>&;
+
+    nb::class_<Set>(m, set_name)
+        .def(nb::init<Coordinates>(), nb::arg("reference_point"))
+        .def(nb::init<Coordinates, Coordinates>(), nb::arg("reference_point"), nb::arg("anti_reference"))
+        .def("update_auto", &Set::update_auto, nb::arg("point"))
+        .def("update_re", &Set::update_re, nb::arg("point"))
+        .def("update_re_enhanced", &Set::update_re_enhanced, nb::arg("point"))
+        .def("update_ra_sa", &Set::update_ra_sa, nb::arg("point"))
+        .def("update_ra", &Set::update_ra, nb::arg("point"))
+        .def("update_naive", &Set::update_naive, nb::arg("point"))
+        .def("size", &Set::size)
+        .def("dimensions", &Set::dimensions)
+        .def("is_in_search_region", &Set::is_in_search_region, nb::arg("point"))
+        .def("find_containing_bound", &Set::find_containing_bound, nb::arg("point"))
+        .def("bounds", &Set::bounds)
+        .def_prop_ro("sense", [](const Set&) { return Sense; });
+
+    nb::class_<Graph>(m, graph_name)
+        .def_ro("nodes", &Graph::nodes)
+        .def_ro("adjacency_list", &Graph::adjacency_list)
+        .def_ro("k_neighbors", &Graph::k_neighbors)
+        .def_ro("quasi", &Graph::quasi);
+
+    nb::class_<Neighborhood>(m, neighborhood_name)
+        .def(nb::init<Coordinates, Coordinates>(), nb::arg("reference_point"), nb::arg("anti_reference"))
+        .def("update", &Neighborhood::update, nb::arg("point"))
+        .def("size", &Neighborhood::size)
+        .def("nonredundant_size", &Neighborhood::nonredundant_size)
+        .def("dimensions", &Neighborhood::dimensions)
+        .def("is_in_search_region", &Neighborhood::is_in_search_region, nb::arg("point"))
+        .def("find_containing_bound", &Neighborhood::find_containing_bound, nb::arg("point"))
+        .def("bounds", &Neighborhood::bounds)
+        .def("nonredundant_bounds", &Neighborhood::nonredundant_bounds)
+        .def("get_adjacency_graph", &Neighborhood::get_adjacency_graph, nb::arg("include_quasi") = false)
+        .def_prop_ro("sense", [](const Neighborhood&) { return Sense; });
+
+    nb::class_<Tree>(m, tree_name)
+        .def(nb::init<Coordinates, size_t, size_t>(),
+             nb::arg("reference_point"), nb::arg("max_leaf_size") = 32, nb::arg("num_children") = 8)
+        .def(nb::init<Coordinates, Coordinates, size_t, size_t>(),
+             nb::arg("reference_point"), nb::arg("anti_reference"), nb::arg("max_leaf_size") = 32, nb::arg("num_children") = 8)
+        .def("update_auto", &Tree::update_auto, nb::arg("point"))
+        .def("update_re", &Tree::update_re, nb::arg("point"))
+        .def("update_re_enhanced", &Tree::update_re_enhanced, nb::arg("point"))
+        .def("update_naive", &Tree::update_naive, nb::arg("point"))
+        .def("size", &Tree::size)
+        .def("dimensions", &Tree::dimensions)
+        .def("is_in_search_region", &Tree::is_in_search_region, nb::arg("point"))
+        .def("find_containing_bound", &Tree::find_containing_bound, nb::arg("point"))
+        .def("bounds", &Tree::bounds)
+        .def_prop_ro("sense", [](const Tree&) { return Sense; });
+}
+
 NB_MODULE(_core, m) {
     m.doc() = "Python bindings for the C++ local_bounds library.";
 
@@ -41,99 +104,8 @@ NB_MODULE(_core, m) {
         .def("__eq__", [](const LocalBound<double>& self, const LocalBound<double>& other) { return self == other; })
         .def("__ne__", [](const LocalBound<double>& self, const LocalBound<double>& other) { return self != other; });
 
-    nb::class_<BoundSet<double, Objective::MINIMIZE>>(m, "BoundSetMinimize")
-        .def(nb::init<const std::vector<double>&>(), nb::arg("reference_point"))
-        .def(nb::init<const std::vector<double>&, const std::vector<double>&>(), nb::arg("reference_point"), nb::arg("anti_reference"))
-        .def("update_auto", &BoundSet<double, Objective::MINIMIZE>::update_auto, nb::arg("point"))
-        .def("update_re", &BoundSet<double, Objective::MINIMIZE>::update_re, nb::arg("point"))
-        .def("update_re_enhanced", &BoundSet<double, Objective::MINIMIZE>::update_re_enhanced, nb::arg("point"))
-        .def("update_ra_sa", &BoundSet<double, Objective::MINIMIZE>::update_ra_sa, nb::arg("point"))
-        .def("update_ra", &BoundSet<double, Objective::MINIMIZE>::update_ra, nb::arg("point"))
-        .def("update_naive", &BoundSet<double, Objective::MINIMIZE>::update_naive, nb::arg("point"))
-        .def("size", &BoundSet<double, Objective::MINIMIZE>::size)
-        .def("dimensions", &BoundSet<double, Objective::MINIMIZE>::dimensions)
-        .def("is_in_search_region", &BoundSet<double, Objective::MINIMIZE>::is_in_search_region, nb::arg("point"))
-        .def("find_containing_bound", &BoundSet<double, Objective::MINIMIZE>::find_containing_bound, nb::arg("point"))
-        .def_prop_ro("bounds", &BoundSet<double, Objective::MINIMIZE>::bounds);
-
-    nb::class_<BoundSet<double, Objective::MAXIMIZE>>(m, "BoundSetMaximize")
-        .def(nb::init<const std::vector<double>&>(), nb::arg("reference_point"))
-        .def(nb::init<const std::vector<double>&, const std::vector<double>&>(), nb::arg("reference_point"), nb::arg("anti_reference"))
-        .def("update_auto", &BoundSet<double, Objective::MAXIMIZE>::update_auto, nb::arg("point"))
-        .def("update_re", &BoundSet<double, Objective::MAXIMIZE>::update_re, nb::arg("point"))
-        .def("update_re_enhanced", &BoundSet<double, Objective::MAXIMIZE>::update_re_enhanced, nb::arg("point"))
-        .def("update_ra_sa", &BoundSet<double, Objective::MAXIMIZE>::update_ra_sa, nb::arg("point"))
-        .def("update_ra", &BoundSet<double, Objective::MAXIMIZE>::update_ra, nb::arg("point"))
-        .def("update_naive", &BoundSet<double, Objective::MAXIMIZE>::update_naive, nb::arg("point"))
-        .def("size", &BoundSet<double, Objective::MAXIMIZE>::size)
-        .def("dimensions", &BoundSet<double, Objective::MAXIMIZE>::dimensions)
-        .def("is_in_search_region", &BoundSet<double, Objective::MAXIMIZE>::is_in_search_region, nb::arg("point"))
-        .def("find_containing_bound", &BoundSet<double, Objective::MAXIMIZE>::find_containing_bound, nb::arg("point"))
-        .def_prop_ro("bounds", &BoundSet<double, Objective::MAXIMIZE>::bounds);
-
-    nb::class_<NeighborhoodBoundSet<double, Objective::MINIMIZE>::AdjacencyGraph>(m, "AdjacencyGraphMinimize")
-        .def_ro("nodes", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::AdjacencyGraph::nodes)
-        .def_ro("adjacency_list", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::AdjacencyGraph::adjacency_list)
-        .def_ro("k_neighbors", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::AdjacencyGraph::k_neighbors)
-        .def_ro("quasi", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::AdjacencyGraph::quasi);
-
-    nb::class_<NeighborhoodBoundSet<double, Objective::MAXIMIZE>::AdjacencyGraph>(m, "AdjacencyGraphMaximize")
-        .def_ro("nodes", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::AdjacencyGraph::nodes)
-        .def_ro("adjacency_list", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::AdjacencyGraph::adjacency_list)
-        .def_ro("k_neighbors", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::AdjacencyGraph::k_neighbors)
-        .def_ro("quasi", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::AdjacencyGraph::quasi);
-
-    nb::class_<NeighborhoodBoundSet<double, Objective::MINIMIZE>>(m, "NeighborhoodBoundSetMinimize")
-        .def(nb::init<const std::vector<double>&, const std::vector<double>&>(), nb::arg("reference_point"), nb::arg("anti_reference"))
-        .def("update", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::update, nb::arg("point"))
-        .def("size", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::size)
-        .def("nonredundant_size", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::nonredundant_size)
-        .def("dimensions", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::dimensions)
-        .def("is_in_search_region", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::is_in_search_region, nb::arg("point"))
-        .def("find_containing_bound", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::find_containing_bound, nb::arg("point"))
-        .def("bounds", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::bounds)
-        .def("nonredundant_bounds", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::nonredundant_bounds)
-        .def("get_adjacency_graph", &NeighborhoodBoundSet<double, Objective::MINIMIZE>::get_adjacency_graph, nb::arg("include_quasi") = false);
-
-    nb::class_<NeighborhoodBoundSet<double, Objective::MAXIMIZE>>(m, "NeighborhoodBoundSetMaximize")
-        .def(nb::init<const std::vector<double>&, const std::vector<double>&>(), nb::arg("reference_point"), nb::arg("anti_reference"))
-        .def("update", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::update, nb::arg("point"))
-        .def("size", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::size)
-        .def("nonredundant_size", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::nonredundant_size)
-        .def("dimensions", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::dimensions)
-        .def("is_in_search_region", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::is_in_search_region, nb::arg("point"))
-        .def("find_containing_bound", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::find_containing_bound, nb::arg("point"))
-        .def("bounds", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::bounds)
-        .def("nonredundant_bounds", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::nonredundant_bounds)
-        .def("get_adjacency_graph", &NeighborhoodBoundSet<double, Objective::MAXIMIZE>::get_adjacency_graph, nb::arg("include_quasi") = false);
-
-    nb::class_<BoundSetTree<double, Objective::MINIMIZE>>(m, "BoundSetTreeMinimize")
-        .def(nb::init<const std::vector<double>&, size_t, size_t>(), 
-             nb::arg("reference_point"), nb::arg("max_leaf_size") = 32, nb::arg("num_children") = 8)
-        .def(nb::init<const std::vector<double>&, const std::vector<double>&, size_t, size_t>(), 
-             nb::arg("reference_point"), nb::arg("anti_reference"), nb::arg("max_leaf_size") = 32, nb::arg("num_children") = 8)
-        .def("update_auto", &BoundSetTree<double, Objective::MINIMIZE>::update_auto, nb::arg("point"))
-        .def("update_re", &BoundSetTree<double, Objective::MINIMIZE>::update_re, nb::arg("point"))
-        .def("update_re_enhanced", &BoundSetTree<double, Objective::MINIMIZE>::update_re_enhanced, nb::arg("point"))
-        .def("update_naive", &BoundSetTree<double, Objective::MINIMIZE>::update_naive, nb::arg("point"))
-        .def("size", &BoundSetTree<double, Objective::MINIMIZE>::size)
-        .def("dimensions", &BoundSetTree<double, Objective::MINIMIZE>::dimensions)
-        .def("is_in_search_region", &BoundSetTree<double, Objective::MINIMIZE>::is_in_search_region, nb::arg("point"))
-        .def("find_containing_bound", &BoundSetTree<double, Objective::MINIMIZE>::find_containing_bound, nb::arg("point"))
-        .def("bounds", &BoundSetTree<double, Objective::MINIMIZE>::bounds);
-
-    nb::class_<BoundSetTree<double, Objective::MAXIMIZE>>(m, "BoundSetTreeMaximize")
-        .def(nb::init<const std::vector<double>&, size_t, size_t>(), 
-             nb::arg("reference_point"), nb::arg("max_leaf_size") = 32, nb::arg("num_children") = 8)
-        .def(nb::init<const std::vector<double>&, const std::vector<double>&, size_t, size_t>(), 
-             nb::arg("reference_point"), nb::arg("anti_reference"), nb::arg("max_leaf_size") = 32, nb::arg("num_children") = 8)
-        .def("update_auto", &BoundSetTree<double, Objective::MAXIMIZE>::update_auto, nb::arg("point"))
-        .def("update_re", &BoundSetTree<double, Objective::MAXIMIZE>::update_re, nb::arg("point"))
-        .def("update_re_enhanced", &BoundSetTree<double, Objective::MAXIMIZE>::update_re_enhanced, nb::arg("point"))
-        .def("update_naive", &BoundSetTree<double, Objective::MAXIMIZE>::update_naive, nb::arg("point"))
-        .def("size", &BoundSetTree<double, Objective::MAXIMIZE>::size)
-        .def("dimensions", &BoundSetTree<double, Objective::MAXIMIZE>::dimensions)
-        .def("is_in_search_region", &BoundSetTree<double, Objective::MAXIMIZE>::is_in_search_region, nb::arg("point"))
-        .def("find_containing_bound", &BoundSetTree<double, Objective::MAXIMIZE>::find_containing_bound, nb::arg("point"))
-        .def("bounds", &BoundSetTree<double, Objective::MAXIMIZE>::bounds);
+    bind_sense<Objective::MINIMIZE>(m, "BoundSetMinimize", "BoundSetTreeMinimize",
+                                    "NeighborhoodBoundSetMinimize", "AdjacencyGraphMinimize");
+    bind_sense<Objective::MAXIMIZE>(m, "BoundSetMaximize", "BoundSetTreeMaximize",
+                                    "NeighborhoodBoundSetMaximize", "AdjacencyGraphMaximize");
 }

@@ -1,5 +1,6 @@
 [build-system]
-requires = ["scikit-build-core", "nanobind"]
+# 0.10 added the wheel.packages table used below.
+requires = ["scikit-build-core>=0.10", "nanobind"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -9,7 +10,7 @@ description = "Local bounds library for multiobjective optimization"
 readme = "README.md"
 requires-python = ">=3.8"
 authors = [
-  { name = "Gabriel Lopes" },
+  { name = "Gonçalo Lopes" },
 ]
 dependencies = []
 
@@ -32,4 +33,9 @@ cmake.args = [
     "-DBUILD_BENCHMARK=OFF"
 ]
 build.targets = ["_core"]
-wheel.packages = ["python/local_bounds", "visualization"]
+install.components = ["python"]
+
+# The dashboard installs as local_bounds.visualization, not as a top-level package.
+[tool.scikit-build.wheel.packages]
+local_bounds = "python/local_bounds"
+"local_bounds/visualization" = "visualization"

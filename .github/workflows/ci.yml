@@ -46,4 +46,4 @@ jobs:
       run: python -m pytest tests
     - name: Verify installed dashboard outside checkout
       working-directory: /tmp
-      run: python -c "from visualization.app import app; assert app.test_client().get('/').status_code == 200"
+      run: python -c "from local_bounds.visualization.app import app; assert app.test_client().get('/').status_code == 200"

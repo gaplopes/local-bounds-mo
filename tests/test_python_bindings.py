@@ -1,5 +1,21 @@
 from local_bounds import Point, BoundSet, BoundSetTree, NeighborhoodBoundSet, Objective
 
+
+def _raises(error, call, *args, **kwargs):
+    try:
+        call(*args, **kwargs)
+    except error:
+        return
+    raise AssertionError(f"expected {error.__name__}")
+
+
+def test_install_adds_nothing_outside_the_package():
+    # The C++ headers and CMake files belong to the CMake install, not to site-packages.
+    from importlib.metadata import files
+    top_level = {path.parts[0] for path in files("local_bounds")}
+    assert not top_level & {"include", "lib", "lib64", "share"}, sorted(top_level)
+
+
 def test_basic():
     print("Testing local_bounds python bindings...")
     ref = [10.0, 10.0, 10.0]
@@ -21,20 +37,60 @@ def test_basic():
     assert bs.update_auto(p_dom) == (False, [])
     assert bs.size() == 3
 
-def test_tree_bounds_property():
-    for sense, reference, coordinates in (
-        (Objective.MINIMIZE, [10.0]*3, [1.0, 2.0, 3.0]),
-        (Objective.MAXIMIZE, [0.0]*3, [9.0, 8.0, 7.0]),
+def test_bounds_is_a_method_on_every_class():
+    for sense, reference, anti, coordinates in (
+        (Objective.MINIMIZE, [10.0]*3, [0.0]*3, [1.0, 2.0, 3.0]),
+        (Objective.MAXIMIZE, [0.0]*3, [10.0]*3, [9.0, 8.0, 7.0]),
     ):
-        bounds = BoundSetTree(reference, sense=sense)
-        initial = bounds.bounds
-        assert isinstance(initial, list)
-        assert [b.coordinates for b in initial] == [reference]
-        updated, _ = bounds.update_re(Point("p1", coordinates))
-        assert updated
-        assert isinstance(bounds.bounds, list)
-        assert len(bounds.bounds) == bounds.size() == 3
-        assert [b.coordinates for b in initial] == [reference]
+        for cls, update in ((BoundSet, "update_re"), (BoundSetTree, "update_re"),
+                            (NeighborhoodBoundSet, "update")):
+            bounds = cls(reference, anti, sense=sense)
+            initial = bounds.bounds()
+            assert isinstance(initial, list)
+            assert [b.coordinates for b in initial] == [reference]
+            updated, _ = getattr(bounds, update)(Point("p1", coordinates))
+            assert updated
+            assert len(bounds.bounds()) == bounds.size() == 3
+            assert [b.coordinates for b in initial] == [reference]  # earlier export is a snapshot
+
+
+def test_sense_is_reported_and_validated():
+    assert BoundSet([1.0], sense="MAXIMIZE").sense == Objective.MAXIMIZE
+    assert BoundSetTree([1.0]).sense == Objective.MINIMIZE
+    assert NeighborhoodBoundSet([1.0], [0.0]).sense == Objective.MINIMIZE
+    for cls in (BoundSet, BoundSetTree):
+        _raises(ValueError, cls, [1.0], sense="sideways")
+
+
+def test_interval_boundaries_and_argument_errors():
+    # The anti-reference boundary is inside the interval; the reference boundary is not.
+    for sense, valid, invalid in ((Objective.MINIMIZE, [0, 5], ([-5e-8, 5], [10, 5])),
+                                  (Objective.MAXIMIZE, [10, 5], ([10 + 5e-8, 5], [0, 5]))):
+        ref, anti = ([10, 10], [0, 0]) if sense == Objective.MINIMIZE else ([0, 0], [10, 10])
+        for cls, name in ((BoundSet, "update_re"), (BoundSetTree, "update_re"),
+                          (NeighborhoodBoundSet, "update")):
+            bounds = cls(ref, anti, sense=sense)
+            for coords in invalid:
+                _raises(ValueError, getattr(bounds, name), Point("z", coords))
+            assert getattr(bounds, name)(Point("z", valid))[0]
+            _raises(ValueError, bounds.find_containing_bound, [1])
+    # RA needs the anti-reference point for its dummy defining points.
+    _raises(RuntimeError, BoundSet([10, 10]).update_ra, Point("z", [3, 7]))
+
+
+def test_raw_graph_keeps_quasi_bounds_and_is_symmetric():
+    tied = [[5, 2, 5], [2, 4, 3], [4, 4, 1], [4, 3, 2], [3, 3, 3]]
+    for sense in (Objective.MINIMIZE, Objective.MAXIMIZE):
+        is_min = sense == Objective.MINIMIZE
+        bounds = NeighborhoodBoundSet([6]*3 if is_min else [0]*3, [0]*3 if is_min else [6]*3, sense=sense)
+        for i, z in enumerate(tied):
+            bounds.update(Point(f"z{i}", z if is_min else [6 - c for c in z]))
+        raw = bounds.get_adjacency_graph(include_quasi=True)
+        assert len(raw.nodes) == bounds.size() > 8
+        assert sum(not q for q in raw.quasi) == bounds.nonredundant_size() == 8
+        for u, neighbors in enumerate(raw.adjacency_list):
+            for v in neighbors:
+                assert u in raw.adjacency_list[v]
 
 
 def test_neighborhood():
@@ -84,9 +140,7 @@ def test_update_results():
                     options = {"max_leaf_size": 2, "num_children": 2} if cls is BoundSetTree else {}
                     bounds = cls(orient([10]*3), orient([0]*3), sense=sense, **options)
                     update = getattr(bounds, name)
-                    def export():
-                        values = bounds.bounds
-                        return values() if callable(values) else values
+                    export = bounds.bounds
                     data = ([[5,2,5], [2,4,3], [4,4,1], [4,3,2], [3,3,3]] if tied else
                             [[3,5,7], [6,2,4], [2,6,5], [5,4,3]])
                     saved = []
@@ -139,26 +193,9 @@ def test_high_dimensional_bound_ids():
                 bounds = cls(orient([100]*11), orient([0]*11), sense=sense)
                 for i, values in enumerate(coordinates):
                     getattr(bounds, method)(Point(f"p{i}", orient(values)))
-                exported = bounds.bounds
-                exported = exported() if callable(exported) else exported
+                exported = bounds.bounds()
                 assert len(exported) == 21
                 assert len({b.id for b in exported}) == len(exported), (cls.__name__, method, sense)
-
-
-def test_neighborhood_equal_coordinate_representative():
-    for sense in (Objective.MINIMIZE, Objective.MAXIMIZE):
-        def orient(values):
-            return values if sense == Objective.MINIMIZE else [6 - x for x in values]
-
-        bounds = NeighborhoodBoundSet(orient([6]*3), orient([0]*3), sense=sense)
-        for i, values in enumerate([[4,4,5], [3,3,4], [3,4,1], [3,2,2], [3,1,5], [1,3,5]]):
-            bounds.update(Point(f"p{i}", orient(values)))
-        raw = bounds.get_adjacency_graph(True)
-        coordinates = orient([3,3,6])
-        aliases = [(b.id, quasi) for b, quasi in zip(raw.nodes, raw.quasi)
-                   if b.coordinates == coordinates]
-        assert [quasi for _, quasi in aliases] == [False, True]
-        assert [b.id for b in bounds.nonredundant_bounds() if b.coordinates == coordinates] == [aliases[0][0]]
 
 
 def test_indexed_neighborhood_exports():
@@ -190,10 +227,13 @@ def test_indexed_neighborhood_exports():
 
 
 if __name__ == "__main__":
+    test_install_adds_nothing_outside_the_package()
     test_basic()
-    test_tree_bounds_property()
+    test_bounds_is_a_method_on_every_class()
+    test_sense_is_reported_and_validated()
+    test_interval_boundaries_and_argument_errors()
+    test_raw_graph_keeps_quasi_bounds_and_is_symmetric()
     test_neighborhood()
     test_update_results()
     test_high_dimensional_bound_ids()
-    test_neighborhood_equal_coordinate_representative()
     test_indexed_neighborhood_exports()

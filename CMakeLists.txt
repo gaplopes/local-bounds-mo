@@ -19,11 +19,21 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # Compiler warnings
-add_compile_options(-Wall -Wextra -Wpedantic)
+if(MSVC)
+  add_compile_options(/W4)
+else()
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
 
-# Options
-option(BUILD_TESTS "Build test programs" ON)
-option(BUILD_EXAMPLES "Build example programs" ON)
+# Options. Tests, examples and benchmarks default to ON only when this is the
+# top-level project, so add_subdirectory/FetchContent consumers do not build them.
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  set(LOCAL_BOUNDS_TOP_LEVEL ON)
+else()
+  set(LOCAL_BOUNDS_TOP_LEVEL OFF)
+endif()
+option(BUILD_TESTS "Build test programs" ${LOCAL_BOUNDS_TOP_LEVEL})
+option(BUILD_EXAMPLES "Build example programs" ${LOCAL_BOUNDS_TOP_LEVEL})
 
 # Header-only library
 add_library(local_bounds INTERFACE)
@@ -57,7 +67,7 @@ if(BUILD_EXAMPLES)
 endif()
 
 # Benchmark
-option(BUILD_BENCHMARK "Build benchmark programs" ON)
+option(BUILD_BENCHMARK "Build benchmark programs" ${LOCAL_BOUNDS_TOP_LEVEL})
 if(BUILD_BENCHMARK)
     add_executable(benchmark benchmark/benchmark.cpp)
     target_link_libraries(benchmark PRIVATE local_bounds)
@@ -105,5 +115,6 @@ if(BUILD_PYTHON_BINDINGS)
     
     # Optional: adjust visibility
     set_target_properties(_core PROPERTIES CXX_VISIBILITY_PRESET "hidden")
-    install(TARGETS _core DESTINATION local_bounds)
+    # The wheel takes only this component (see pyproject.toml), not the headers above.
+    install(TARGETS _core DESTINATION local_bounds COMPONENT python)
 endif()

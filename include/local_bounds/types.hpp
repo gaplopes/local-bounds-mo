@@ -92,6 +92,8 @@ struct LocalBound {
 
   /// Defining points z^j(u) for each component j (Algorithm 4, SA case).
   /// Size = p. Entry j is the single point z in N_hat such that z_j = u_j and z_{-j} < u_{-j}.
+  /// NeighborhoodBoundSet also fills this; with ties its entries follow Paper 2's
+  /// insertion-order tie-breaking and may equal u in another component.
   std::vector<Point<T>> defining_points;
 
   /// Defining point sets Z^j(u) for each component j (Algorithm 5, general case).

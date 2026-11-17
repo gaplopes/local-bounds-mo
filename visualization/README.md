@@ -18,7 +18,7 @@ Explore local bounds in two or three objectives through an interactive web dashb
 
 ## Installation
 
-Run the commands in this guide from the **repository root**, which contains `pyproject.toml`, rather than from inside `visualization/`.
+Run the commands in this guide from the **repository root**, which contains `pyproject.toml`, rather than from inside `visualization/`. The package installs as `local_bounds.visualization`.
 
 The Python package requires Python 3.8+, a C++17 compiler, and CMake 3.15+. Visualization dependencies are Flask, Plotly, NetworkX, and NumPy; their declared versions are in [requirements.txt](requirements.txt) and the `vis` extra in [pyproject.toml](../pyproject.toml).
 
@@ -35,7 +35,7 @@ For a regular installation, use `python -m pip install ".[vis]"` instead. Instal
 ## Interactive dashboard
 
 ```bash
-python -m visualization.app --port 8050
+python -m local_bounds.visualization.app --port 8050
 ```
 
 Open [http://127.0.0.1:8050](http://127.0.0.1:8050). The initial problem is the 3D minimization `paper2` preset, with all three points inserted.
@@ -51,7 +51,7 @@ The dashboard launcher accepts:
 For example, start with tied coordinates on a different port:
 
 ```bash
-python -m visualization.app --preset paper1_ngp --port 8051
+python -m local_bounds.visualization.app --preset paper1_ngp --port 8051
 ```
 
 ### Explore an example
@@ -87,7 +87,7 @@ Use **Dominated Zones D(N)** and **Search Zones S(u)** to toggle the 3D regions.
 
 ### Bounds table and neighborhood graph
 
-The table lists each bound's ID, coordinates `u`, defining points `z^j(u)`, component neighbors `ν_k(u)`, and status. Dummy defining points are displayed as `z^1`, `z^2`, and `z^3`. Table selections highlight the corresponding search zone and graph node.
+The table lists each bound's ID, coordinates `u`, defining points `z^j(u)`, component neighbors `ν_k(u)`, and status. Dummy defining points are displayed as `z^1`, `z^2`, and `z^3`. With tied coordinates they follow Paper 2's insertion-order rule (Example 4.13). For a bound set that stores no defining points, such as `BoundSet` after `update_re()`, the first inserted point that strictly defines the component is shown, or `-` if none is known. Table selections highlight the corresponding search zone and graph node.
 
 The graph offers two topologies:
 
@@ -133,19 +133,19 @@ The CLI prints a final bounds table and writes a standalone HTML file containing
 
 ```bash
 # Paper 2 example, with per-insertion details in the terminal
-python -m visualization.cli --preset paper2 --step-by-step --output report_3d.html
+python -m local_bounds.visualization.cli --preset paper2 --step-by-step --output report_3d.html
 
 # 2D example
-python -m visualization.cli --preset 2d --step-by-step --output report_2d.html
+python -m local_bounds.visualization.cli --preset 2d --step-by-step --output report_2d.html
 
 # Maximization example
-python -m visualization.cli --preset max_3d --output report_max.html
+python -m local_bounds.visualization.cli --preset max_3d --output report_max.html
 
 # Custom minimization points and interval
-python -m visualization.cli --dim 3 --points '[[4,0,4],[3,3,1],[2,2,2]]' --ref '10,10,10' --anti '0,0,0' --output custom.html
+python -m local_bounds.visualization.cli --dim 3 --points '[[4,0,4],[3,3,1],[2,2,2]]' --ref '10,10,10' --anti '0,0,0' --output custom.html
 
 # Launch the dashboard instead of writing a report
-python -m visualization.cli --interactive --preset paper1_ngp --port 8050
+python -m local_bounds.visualization.cli --interactive --preset paper1_ngp --port 8050
 ```
 
 ### CLI options
@@ -166,7 +166,7 @@ There is no separate `--sense` flag. Use `--preset max_3d` with `--points` for c
 
 `--step-by-step` changes terminal output and retains intermediate snapshots; the HTML report still shows the final state. Without it, the CLI constructs only the final state. `--interactive` uses only the preset and port; configure custom points and interval bounds in the dashboard.
 
-Run `python -m visualization.cli --help` or `python -m visualization.app --help` for launcher help. Existing output files are overwritten.
+Run `python -m local_bounds.visualization.cli --help` or `python -m local_bounds.visualization.app --help` for launcher help. Existing output files are overwritten.
 
 ## Python API
 
@@ -174,7 +174,7 @@ Run `python -m visualization.cli --help` or `python -m visualization.app --help`
 
 ```python
 import local_bounds as lb
-import visualization.engine as vis
+import local_bounds.visualization.engine as vis
 
 reference = [10.0, 10.0, 10.0]
 anti_reference = [0.0, 0.0, 0.0]
@@ -227,7 +227,7 @@ Use the `paper1_ngp` points to see quasi-nonredundant nodes. `vis.extract_networ
 `LocalBoundsTracker` validates each insertion and stores an independent bounds snapshot for every step, including step 0 before any points are added:
 
 ```python
-from visualization.engine import LocalBoundsTracker
+from local_bounds.visualization.engine import LocalBoundsTracker
 
 tracker = LocalBoundsTracker(reference, anti_reference)
 for point in points:
@@ -272,7 +272,7 @@ State, graph, figure, and probe requests accept `?step=N`; omitted steps use the
 |---|---|
 | `No module named local_bounds` or a missing visualization dependency | Activate the intended virtual environment and run `python -m pip install -e ".[vis]"` from the repository root. |
 | Missing library attributes or incompatible graph-export arguments | Rebuild the native extension with the same install command; an older installed extension can disagree with the checkout. |
-| Relative import error when launching a script | Use `python -m visualization.app` or `python -m visualization.cli`, rather than running the `.py` file directly. |
+| Relative import error when launching a script | Use `python -m local_bounds.visualization.app` or `python -m local_bounds.visualization.cli`, rather than running the `.py` file directly. |
 | Port already in use | Choose another port, such as `--port 8051`, and open that address. |
 | Dashboard lacks styling, icons, or its graph | Check access to the CDN assets. Standalone CLI reports are the offline option. |
 | A point is rejected at an interval boundary | Check the sense-dependent inequalities in [Input rules](#input-rules); the reference boundary is excluded. |

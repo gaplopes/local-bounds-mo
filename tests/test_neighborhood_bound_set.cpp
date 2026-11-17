@@ -6,6 +6,7 @@
 #include <limits>
 #include <random>
 #include <set>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -83,6 +84,34 @@ void test_example_2_8_from_paper() {
       });
 
   std::cout << "Example 2.8 passed.\n\n";
+}
+
+void test_example_4_2_from_paper() {
+  std::cout << "--- Example 4.2 (paper) ---\n";
+
+  const std::vector<int64_t> M = {10, 10, 10};
+  const std::vector<int64_t> m = {0, 0, 0};
+
+  NeighborhoodBoundSet<int64_t> nbs(M, m);
+
+  // Start from N={z1} then insert z2 exactly as Example 4.2.
+  const IntPoint z1("z1", {4, 0, 4});
+  const IntPoint z2("z2", {3, 3, 1});
+
+  nbs.update(z1);
+  nbs.update(z2);
+
+  assert_bounds_equal(
+      nbs.bounds(),
+      {
+          {3, 10, 10},
+          {4, 3, 10},
+          {10, 0, 10},
+          {10, 3, 4},
+          {10, 10, 1},
+      });
+
+  std::cout << "Example 4.2 passed.\n\n";
 }
 
 void test_example_4_13_ngp_from_paper() {
@@ -205,8 +234,129 @@ void test_update_return_value() {
   std::cout << "update() return value tests passed.\n\n";
 }
 
+// Paper 2, Example 4.13: with ties, the defining points follow the insertion
+// order of eq. (6). z2 defines the first component of the quasi-nonredundant
+// bound (4,3,4) although z2 ties with it in the second component.
+void test_defining_points_match_paper_example_4_13() {
+  std::cout << "--- Defining points of Example 4.13 (paper, NGP) ---\n";
+
+  const int64_t M = 10;
+  NeighborhoodBoundSet<int64_t> nbs({M, M, M}, {0, 0, 0});
+  nbs.update(IntPoint("z1", {4, 0, 4}));
+  nbs.update(IntPoint("z2", {4, 3, 1}));
+  nbs.update(IntPoint("z3", {2, 3, 2}));
+
+  const std::vector<std::pair<std::vector<int64_t>, std::vector<std::string>>> table = {
+      {{2, M, M}, {"z3", "z_hat2", "z_hat3"}},
+      {{4, 3, M}, {"z1", "z3", "z_hat3"}},
+      {{M, 0, M}, {"z_hat1", "z1", "z_hat3"}},
+      {{4, 3, 4}, {"z2", "z3", "z1"}},
+      {{4, M, 2}, {"z2", "z_hat2", "z3"}},
+      {{M, 3, 4}, {"z_hat1", "z2", "z1"}},
+      {{M, M, 1}, {"z_hat1", "z_hat2", "z2"}},
+  };
+  const auto bounds = nbs.bounds();
+  CHECK(bounds.size() == table.size());
+  for (const auto& row : table) {
+    const auto u = std::find_if(bounds.begin(), bounds.end(),
+                                [&](const IntBound& b) { return b.coordinates == row.first; });
+    CHECK(u != bounds.end());
+    std::vector<std::string> got;
+    for (const auto& z : u->defining_points) got.push_back(z.id);
+    CHECK(got == row.second);
+    CHECK(u->defining_point_sets.empty());  // Algorithm 1 does not maintain the sets Z^j(u)
+  }
+
+  std::cout << "Example 4.13 defining points passed.\n\n";
+}
+
+// Returns how many quasi-nonredundant bounds the run produced.
+template <Objective Sense>
+std::size_t check_exports_match_pairwise_scan(std::size_t p, int64_t K, unsigned seed) {
+  constexpr bool minimize = Sense == Objective::MINIMIZE;
+  const std::vector<int64_t> ref(p, minimize ? K + 1 : 0), anti(p, minimize ? 0 : K + 1);
+  NeighborhoodBoundSet<int64_t, Sense> nbs(ref, anti);
+  BoundSet<int64_t, Sense> re(ref);
+  std::mt19937 rng(seed);
+  // Includes the anti-reference boundary, which updates accept.
+  std::uniform_int_distribution<int64_t> value(minimize ? 0 : 1, minimize ? K : K + 1);
+  std::vector<std::vector<int64_t>> points;
+  std::size_t quasi_seen = 0;
+
+  for (int attempt = 0; attempt < 60; ++attempt) {
+    std::vector<int64_t> z(p);
+    for (auto& c : z) c = value(rng);
+    // Keep the input stable: skip points comparable with an earlier one.
+    if (std::any_of(points.begin(), points.end(), [&](const auto& q) {
+          return weakly_dominates<int64_t, Sense>(q, z) || weakly_dominates<int64_t, Sense>(z, q);
+        }))
+      continue;
+    points.push_back(z);
+    nbs.update(IntPoint(z));
+    re.update_re(IntPoint(z));
+
+    // Independent classification: compare every active bound with every other,
+    // keeping the first slot among equal coordinates. bounds() is in slot order.
+    const auto raw = nbs.bounds();
+    std::vector<bool> quasi(raw.size(), false);
+    std::vector<std::vector<int64_t>> expected;
+    for (std::size_t i = 0; i < raw.size(); ++i) {
+      for (std::size_t j = 0; j < raw.size(); ++j)
+        if (i != j && weakly_dominates<int64_t, Sense>(raw[i].coordinates, raw[j].coordinates) &&
+            (raw[i].coordinates != raw[j].coordinates || j < i))
+          quasi[i] = true;
+      if (!quasi[i]) expected.push_back(raw[i].coordinates);
+    }
+    quasi_seen += raw.size() - expected.size();
+
+    std::vector<std::vector<int64_t>> got;
+    for (const auto& b : nbs.nonredundant_bounds()) got.push_back(b.coordinates);
+    CHECK(got == expected);
+    CHECK(nbs.nonredundant_size() == expected.size());
+    CHECK(nbs.get_adjacency_graph(true).quasi == quasi);
+
+    // The contracted graph must agree with the standalone per-node query.
+    const auto graph = nbs.get_adjacency_graph();
+    CHECK(graph.nodes.size() == expected.size());
+    std::vector<std::size_t> internal, dense(nbs.max_node_index(), nbs.npos);
+    for (std::size_t slot = 0, active = 0; slot < nbs.max_node_index(); ++slot) {
+      if (!nbs.is_active(slot)) continue;
+      if (!quasi[active++]) { dense[slot] = internal.size(); internal.push_back(slot); }
+    }
+    for (std::size_t u = 0; u < internal.size(); ++u) {
+      std::vector<std::size_t> want;
+      for (std::size_t slot : nbs.get_clean_neighbors(internal[u])) want.push_back(dense[slot]);
+      CHECK(graph.adjacency_list[u] == want);
+    }
+
+    // And the filtered set is exactly U(N), as computed by Algorithm 2.
+    std::sort(expected.begin(), expected.end());
+    CHECK(expected == canonicalize_bounds(re.bounds()));
+    CHECK(expected.size() == re.size());
+  }
+  return quasi_seen;
+}
+
+void test_nonredundant_exports_match_pairwise_scan() {
+  std::cout << "--- Nonredundant exports vs pairwise scan (random ties) ---\n";
+
+  std::size_t quasi_seen = 0;
+  for (std::size_t p : {2, 3, 4})
+    for (int64_t K : {4, 8, 30})
+      for (unsigned seed = 0; seed < 15; ++seed) {
+        quasi_seen += check_exports_match_pairwise_scan<Objective::MINIMIZE>(p, K, seed);
+        quasi_seen += check_exports_match_pairwise_scan<Objective::MAXIMIZE>(p, K, seed);
+      }
+  CHECK(quasi_seen > 0);  // otherwise the inputs never exercised the filter
+
+  std::cout << "Export classification passed (" << quasi_seen << " quasi bounds seen).\n\n";
+}
+
 int main() {
+  test_defining_points_match_paper_example_4_13();
+  test_nonredundant_exports_match_pairwise_scan();
   test_example_2_8_from_paper();
+  test_example_4_2_from_paper();
   test_example_4_13_ngp_from_paper();
   test_zbar_dominates_several_bounds();
   test_fixed_cross_validation();
