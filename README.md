@@ -21,11 +21,15 @@ are added.
 *Minimization in two objectives. Three points (red) give four local upper
 bounds (blue). A new nondominated point can only lie inside one of the boxes.*
 
-The library is an independent implementation of the algorithms in two papers,
-which do not come with source code:
+The library is an independent implementation of algorithms from two papers.
 
 - **Paper 1:** Klamroth, Lacour and Vanderpooten, *On the representation of the search region in multi-objective optimization*, EJOR, 2015. [DOI: 10.1016/j.ejor.2015.03.031](http://dx.doi.org/10.1016/j.ejor.2015.03.031)
 - **Paper 2:** Dächert, Klamroth, Lacour and Vanderpooten, *Efficient computation of the search region in multi-objective optimization*, EJOR, 2017. [DOI: 10.1016/j.ejor.2016.05.029](http://dx.doi.org/10.1016/j.ejor.2016.05.029)
+
+The original C implementation accompanying Paper 2 is available in Renaud Lacour’s
+[`search_region` repository](https://github.com/renaudlr/search_region).
+
+If you use Local-Bounds-MO in research, please [cite both papers and the library](#citation).
 
 ## Contents
 
